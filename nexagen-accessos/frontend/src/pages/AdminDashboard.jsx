@@ -8,6 +8,8 @@ import {
   getAccessRequests,
   getAuditLogs,
   getAlerts,
+  approveRequest,
+  denyRequest,
 } from '../api/client.js';
 
 const TABS = [
@@ -148,6 +150,7 @@ function AlertBanner() {
 function useTabData(fetcher, deps = []) {
   const [data, setData] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | error
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,9 +168,11 @@ function useTabData(fetcher, deps = []) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, reloadToken]);
 
-  return [data, status];
+  const refetch = () => setReloadToken((t) => t + 1);
+
+  return [data, status, refetch];
 }
 
 // --- Tabs -------------------------------------------------------------
@@ -247,14 +252,32 @@ function RolesTab() {
 }
 
 function AccessRequestsTab() {
-  const [requests, status] = useTabData(getAccessRequests);
-  const [handled, setHandled] = useState({}); // id -> 'approved' | 'denied'
+  const [requests, status, refetch] = useTabData(getAccessRequests);
+  const [pending, setPending] = useState({}); // id -> true while request is in flight
+  const [rowError, setRowError] = useState({}); // id -> error message
   const colSpan = 4;
 
-  function handleDecision(requestId, decision) {
-    // TODO: wire to PUT /admin/access-requests/:id once the endpoint is live.
-    console.log(`[AccessRequests] ${decision} request #${requestId}`);
-    setHandled((prev) => ({ ...prev, [requestId]: decision }));
+  async function handleDecision(requestId, decision) {
+    setPending((prev) => ({ ...prev, [requestId]: true }));
+    setRowError((prev) => ({ ...prev, [requestId]: null }));
+
+    try {
+      if (decision === 'approved') {
+        await approveRequest(requestId);
+      } else {
+        await denyRequest(requestId);
+      }
+      // Row disappears once the list re-fetches (backend only returns
+      // pending requests), so there's no separate "handled" state to track.
+      refetch();
+    } catch (err) {
+      setRowError((prev) => ({
+        ...prev,
+        [requestId]: `Couldn't ${decision === 'approved' ? 'approve' : 'deny'} this request. Try again.`,
+      }));
+    } finally {
+      setPending((prev) => ({ ...prev, [requestId]: false }));
+    }
   }
 
   return (
@@ -277,7 +300,8 @@ function AccessRequestsTab() {
         )}
         {status === 'ready' &&
           requests.map((req) => {
-            const decision = handled[req.id];
+            const isPending = !!pending[req.id];
+            const error = rowError[req.id];
             return (
               <tr key={req.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium text-slate-800">
@@ -290,26 +314,27 @@ function AccessRequestsTab() {
                   {formatDate(req.requestedAt)}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {decision ? (
-                    <StatusPill tone={decision === 'approved' ? 'green' : 'red'}>
-                      {decision === 'approved' ? 'Approved' : 'Denied'}
-                    </StatusPill>
-                  ) : (
+                  <div className="flex flex-col items-end gap-1">
                     <div className="flex justify-end gap-2">
                       <button
                         onClick={() => handleDecision(req.id, 'approved')}
-                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                        disabled={isPending}
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Approve
+                        {isPending ? 'Approving…' : 'Approve'}
                       </button>
                       <button
                         onClick={() => handleDecision(req.id, 'denied')}
-                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+                        disabled={isPending}
+                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Deny
+                        {isPending ? 'Denying…' : 'Deny'}
                       </button>
                     </div>
-                  )}
+                    {error && (
+                      <span className="text-xs text-rose-500">{error}</span>
+                    )}
+                  </div>
                 </td>
               </tr>
             );
