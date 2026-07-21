@@ -1,22 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { mockRoles } from '../api/mockData.js';
-
-// TODO(swap-in): once Login.jsx is wired up, replace this hardcoded object
-// with the real user. Simplest path: have Login.jsx store the *whole* login
-// response (not just the token) in sessionStorage as JSON, e.g.
-//   sessionStorage.setItem('token', data.token);
-//   sessionStorage.setItem('user', JSON.stringify(data.user));
-// then here:
-//   const user = JSON.parse(sessionStorage.getItem('user'));
-// (A raw JWT alone doesn't give you roles/permissions client-side without
-// decoding it, so storing the user object separately is the easy route.)
-const mockUser = {
-  id: 1,
-  name: 'Priya Sharma',
-  email: 'priya@nexagen.com',
-  roles: ['finance'],
-  permissions: ['view_finance_dashboard'],
-};
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -160,8 +143,31 @@ function RequestAccessModal({ roles, onClose, onSubmit }) {
 }
 
 export default function Dashboard() {
-  const user = mockUser;
+  const [user, setUser] = useState(null);
+  const [checkedStorage, setCheckedStorage] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+
+  useEffect(() => {
+    const raw = sessionStorage.getItem('user');
+
+    if (!raw) {
+      window.location.href = '/';
+      return;
+    }
+
+    try {
+      const parsedUser = JSON.parse(raw);
+      setUser(parsedUser);
+    } catch (err) {
+      // Malformed JSON in sessionStorage — treat same as "not logged in"
+      console.error('Failed to parse user from sessionStorage:', err);
+      sessionStorage.removeItem('user');
+      window.location.href = '/';
+      return;
+    }
+
+    setCheckedStorage(true);
+  }, []);
 
   const handleRequestSubmit = (role) => {
     // TODO: wire to POST /access-requests once the backend route is live
@@ -169,6 +175,12 @@ export default function Dashboard() {
     console.log('Access requested:', role);
     setModalOpen(false);
   };
+
+  // Avoid rendering (and avoid a flash of content) until we've checked
+  // sessionStorage and either have a user or have already redirected.
+  if (!checkedStorage || !user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
