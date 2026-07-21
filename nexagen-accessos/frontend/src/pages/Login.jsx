@@ -28,8 +28,9 @@ export default function Login() {
 
     try {
       if (isLogin) {
-        const { token } = await login(form.email, form.password);
+        const { token, user } = await login(form.email, form.password);
         sessionStorage.setItem('token', token);
+        sessionStorage.setItem('user', JSON.stringify(user));
         navigate('/dashboard');
       } else {
         // Registration flow: backend contract is POST /auth/register
