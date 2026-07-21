@@ -4,7 +4,6 @@ import jwt from 'jsonwebtoken';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
 
-// Owned by Backend Dev 1. Fill in error handling / validation as you build.
 const router = Router();
 
 router.post('/register', async (req, res) => {
@@ -21,7 +20,19 @@ router.post('/register', async (req, res) => {
       [name, email, hash]
     );
 
-    // TODO: assign default 'employee' role via user_roles insert
+    // Assign default 'employee' role
+    const { rows: roleRows } = await pool.query(
+      `SELECT id FROM roles WHERE name = 'employee'`
+    );
+    if (roleRows.length === 0) {
+      // Shouldn't happen since schema.sql seeds this role, but fail loudly if it's missing
+      console.error("Default role 'employee' not found in roles table");
+    } else {
+      await pool.query(
+        `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
+        [rows[0].id, roleRows[0].id]
+      );
+    }
 
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -45,11 +56,35 @@ router.post('/login', async (req, res) => {
     // TODO: call rules engine here to score this login (new device / odd hour)
     // and insert into login_events before issuing the token.
 
+    // Roles assigned to this user
+    const { rows: roleRows } = await pool.query(
+      `SELECT r.name
+       FROM roles r
+       JOIN user_roles ur ON ur.role_id = r.id
+       WHERE ur.user_id = $1`,
+      [user.id]
+    );
+    const roles = roleRows.map((r) => r.name);
+
+    // Combined, deduped permissions across all of the user's roles
+    const { rows: permRows } = await pool.query(
+      `SELECT DISTINCT p.name
+       FROM permissions p
+       JOIN role_permissions rp ON rp.permission_id = p.id
+       JOIN user_roles ur ON ur.role_id = rp.role_id
+       WHERE ur.user_id = $1`,
+      [user.id]
+    );
+    const permissions = permRows.map((p) => p.name);
+
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
 
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    res.json({
+      token,
+      user: { id: user.id, name: user.name, email: user.email, roles, permissions },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed' });
