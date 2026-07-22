@@ -14,6 +14,64 @@ const router = Router();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
 
+// --- Account lockout -------------------------------------------------------
+//
+// This is a hard block, separate from rulesEngine.js's scoreLogin(). scoreLogin
+// already counts failed attempts (>=5 in a 2-minute window -> +50 risk), but
+// that only ever raises a risk_score for the alerts feed — it never stops a
+// login. Reusing its exact window/threshold here would tie a security control
+// to constants tuned for a scoring heuristic, so this tracks the same kind of
+// signal (recent failures on login_events) independently, with its own window
+// long enough to actually slow down a brute-force attempt.
+//
+// Because the query is windowed, the lock lifts on its own once the window
+// rolls past the last failure — no separate "locked_until" column needed, and
+// schema.sql (locked) stays untouched.
+const LOCKOUT_THRESHOLD = parseInt(process.env.LOGIN_LOCKOUT_THRESHOLD, 10) || 5;
+const LOCKOUT_WINDOW_MINUTES = parseInt(process.env.LOGIN_LOCKOUT_WINDOW_MINUTES, 10) || 15;
+
+// Returns { locked: false } or { locked: true, retryAfterSeconds }.
+async function getLockoutStatus(userId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS fail_count, MAX(created_at) AS last_failed_at
+     FROM login_events
+     WHERE user_id = $1 AND success = false
+       AND created_at > NOW() - make_interval(mins => $2)`,
+    [userId, LOCKOUT_WINDOW_MINUTES]
+  );
+  const { fail_count: failCount, last_failed_at: lastFailedAt } = rows[0];
+
+  if (failCount < LOCKOUT_THRESHOLD) return { locked: false };
+
+  const unlockAt = new Date(lastFailedAt).getTime() + LOCKOUT_WINDOW_MINUTES * 60 * 1000;
+  const retryAfterSeconds = Math.max(1, Math.ceil((unlockAt - Date.now()) / 1000));
+  return { locked: true, retryAfterSeconds };
+}
+
+async function fetchRolesAndPermissions(userId) {
+  const { rows: roleRows } = await pool.query(
+    `SELECT r.name
+     FROM roles r
+     JOIN user_roles ur ON ur.role_id = r.id
+     WHERE ur.user_id = $1`,
+    [userId]
+  );
+
+  const { rows: permRows } = await pool.query(
+    `SELECT DISTINCT p.name
+     FROM permissions p
+     JOIN role_permissions rp ON rp.permission_id = p.id
+     JOIN user_roles ur ON ur.role_id = rp.role_id
+     WHERE ur.user_id = $1`,
+    [userId]
+  );
+
+  return {
+    roles: roleRows.map((r) => r.name),
+    permissions: permRows.map((p) => p.name),
+  };
+}
+
 router.post('/register', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
@@ -63,6 +121,22 @@ router.post('/login', async (req, res) => {
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
+    const lockout = await getLockoutStatus(user.id);
+    if (lockout.locked) {
+      // Log the attempt (so hammering the endpoint while locked keeps
+      // extending the window) but skip bcrypt entirely — no need to spend
+      // the compute or reveal whether the password would've matched.
+      await pool.query(
+        `INSERT INTO login_events (user_id, success, ip_address, device_fingerprint, risk_score)
+         VALUES ($1, false, $2, $3, 0)`,
+        [user.id, ipAddress, deviceFingerprint]
+      );
+      res.set('Retry-After', String(lockout.retryAfterSeconds));
+      return res.status(429).json({
+        error: `Too many failed login attempts. Try again in ${lockout.retryAfterSeconds}s.`,
+      });
+    }
+
     const match = await bcrypt.compare(password, user.password_hash);
 
     // Insert the attempt into login_events regardless of outcome, now that
@@ -87,24 +161,7 @@ router.post('/login', async (req, res) => {
       [riskScore, loginEventId]
     );
 
-    const { rows: roleRows } = await pool.query(
-      `SELECT r.name
-       FROM roles r
-       JOIN user_roles ur ON ur.role_id = r.id
-       WHERE ur.user_id = $1`,
-      [user.id]
-    );
-    const roles = roleRows.map((r) => r.name);
-
-    const { rows: permRows } = await pool.query(
-      `SELECT DISTINCT p.name
-       FROM permissions p
-       JOIN role_permissions rp ON rp.permission_id = p.id
-       JOIN user_roles ur ON ur.role_id = rp.role_id
-       WHERE ur.user_id = $1`,
-      [user.id]
-    );
-    const permissions = permRows.map((p) => p.name);
+    const { roles, permissions } = await fetchRolesAndPermissions(user.id);
 
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
@@ -126,7 +183,14 @@ router.get('/me', requireAuth, async (req, res) => {
     if (!rows[0]) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json(rows[0]);
+
+    // The JWT only carries { id, email } — roles/permissions are always
+    // re-queried here, never read from the token, so a role change made
+    // after the token was issued shows up on the very next /me call instead
+    // of waiting for the user to log in again.
+    const { roles, permissions } = await fetchRolesAndPermissions(req.user.id);
+
+    res.json({ ...rows[0], roles, permissions });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load current user' });
