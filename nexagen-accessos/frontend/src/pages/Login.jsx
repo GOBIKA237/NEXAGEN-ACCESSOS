@@ -1,6 +1,34 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login, register } from '../api/client.js';
+
+// Shown while we check sessionStorage for an existing session, instead of
+// flashing the real login form for someone who's actually already signed
+// in (they get redirected straight past this — see the effect below).
+function LoginSkeleton() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 px-4">
+      <div className="w-full max-w-md animate-pulse rounded-2xl bg-white p-8 shadow-lg">
+        <div className="mb-6 flex flex-col items-center gap-2">
+          <div className="h-6 w-32 rounded bg-slate-200" />
+          <div className="h-3 w-40 rounded bg-slate-200" />
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <div className="h-3 w-16 rounded bg-slate-200" />
+            <div className="h-9 w-full rounded-lg bg-slate-200" />
+          </div>
+          <div className="space-y-1.5">
+            <div className="h-3 w-20 rounded bg-slate-200" />
+            <div className="h-9 w-full rounded-lg bg-slate-200" />
+          </div>
+          <div className="h-9 w-full rounded-lg bg-slate-300" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Spinner() {
   return (
@@ -49,7 +77,36 @@ export default function Login() {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Whether we've finished checking for an existing session on mount. Kept
+  // separate from `loading` (that's for the submit button) so the skeleton
+  // below only ever covers this first check, never a form submission.
+  const [checkingSession, setCheckingSession] = useState(true);
+
   const isLogin = mode === 'login';
+
+  // If there's already a valid-looking session, don't flash the login form
+  // — send them straight to where they'd land after signing in. Mirrors
+  // the sessionStorage read Dashboard.jsx already does on its own mount.
+  useEffect(() => {
+    const rawUser = sessionStorage.getItem('user');
+    const token = sessionStorage.getItem('token');
+
+    if (rawUser && token) {
+      try {
+        const existingUser = JSON.parse(rawUser);
+        navigate(existingUser?.roles?.includes('admin') ? '/admin' : '/dashboard');
+        return;
+      } catch (err) {
+        // Malformed JSON in sessionStorage — treat same as "not logged in"
+        console.error('Failed to parse user from sessionStorage:', err);
+        sessionStorage.removeItem('user');
+        sessionStorage.removeItem('token');
+      }
+    }
+
+    setCheckingSession(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -204,6 +261,10 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingSession) {
+    return <LoginSkeleton />;
   }
 
   return (
