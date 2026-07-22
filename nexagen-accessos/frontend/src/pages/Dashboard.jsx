@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { requestAccess, getAvailableRoles } from '../api/client.js';
+import Header from '../components/Header.jsx';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -103,8 +104,9 @@ function Toast({ type, message, onDismiss }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-5xl animate-pulse">
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <div className="mx-auto max-w-5xl animate-pulse p-6 md:p-10">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-full bg-slate-200" />
@@ -311,8 +313,9 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-5xl">
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <div className="mx-auto max-w-5xl p-6 md:p-10">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
