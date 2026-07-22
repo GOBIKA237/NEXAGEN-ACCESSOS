@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import rbacRoutes from './routes/rbac.routes.js';
 import requestRoutes from './routes/Request.routes.js';
 
 dotenv.config();
@@ -36,6 +37,12 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRoutes);
+// rbacRoutes is mounted first because it's the complete implementation
+// (role/permission CRUD, PUT /users/:id/roles). adminRoutes only has the
+// two GET routes it started with; those are now shadowed by rbacRoutes'
+// versions of the same paths. Safe to delete adminRoutes.js once confirmed
+// nothing else depends on it — see bug report from smoke testing.
+app.use('/api/admin', rbacRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Access requests and audit log routes
