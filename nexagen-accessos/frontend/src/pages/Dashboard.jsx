@@ -1,21 +1,26 @@
 import { useState, useEffect } from 'react';
-import { requestAccess, getAvailableRoles } from '../api/client.js';
-import Header from '../components/Header.jsx';
+import { Link } from 'react-router-dom';
+import { requestAccess, getAvailableRoles, getMe } from '../api/client.js';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
+// `path` is optional: only set it once a real page exists for the card.
+// Cards without a path keep the old inert "Open →" button rather than
+// linking somewhere that 404s.
 const FEATURES = [
   {
     key: 'view_finance_dashboard',
     title: 'Finance Dashboard',
     description: 'View budgets, expenses, and financial reports.',
     accent: 'bg-emerald-500',
+    path: '/dashboard/finance',
   },
   {
     key: 'view_hr_dashboard',
     title: 'HR Dashboard',
     description: 'Employee records, leave requests, and payroll.',
     accent: 'bg-sky-500',
+    path: '/dashboard/hr',
   },
   {
     key: 'manage_users',
@@ -31,6 +36,13 @@ const FEATURES = [
   },
 ];
 
+// Human-readable label for a permission key, for use in the "new access"
+// toast. Falls back to the raw key for permissions that aren't tied to a
+// dashboard card (e.g. anything admin-only).
+function permissionLabel(key) {
+  return FEATURES.find((f) => f.key === key)?.title ?? key;
+}
+
 function initials(name) {
   return name
     .split(' ')
@@ -40,7 +52,7 @@ function initials(name) {
     .toUpperCase();
 }
 
-function FeatureCard({ title, description, accent, enabled }) {
+function FeatureCard({ title, description, accent, enabled, path }) {
   return (
     <div
       className={`relative rounded-xl border p-5 shadow-sm transition ${
@@ -54,7 +66,14 @@ function FeatureCard({ title, description, accent, enabled }) {
       <p className="mt-1 text-sm text-slate-500">{description}</p>
 
       <div className="mt-4">
-        {enabled ? (
+        {enabled && path ? (
+          <Link
+            to={path}
+            className="text-sm font-medium text-slate-700 hover:text-slate-900"
+          >
+            Open →
+          </Link>
+        ) : enabled ? (
           <button
             type="button"
             className="text-sm font-medium text-slate-700 hover:text-slate-900"
@@ -104,9 +123,8 @@ function Toast({ type, message, onDismiss }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <Header />
-      <div className="mx-auto max-w-5xl animate-pulse p-6 md:p-10">
+    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+      <div className="mx-auto max-w-5xl animate-pulse">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-full bg-slate-200" />
@@ -247,6 +265,55 @@ export default function Dashboard() {
   const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
   const [roles, setRoles] = useState([]);
   const [rolesStatus, setRolesStatus] = useState('idle'); // idle | loading | ready | error
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Pulls the latest roles/permissions from the server and writes them
+  // back into sessionStorage + state. Called on mount and from the manual
+  // "Refresh access" button — this is what makes an admin's approval show
+  // up without the user having to log out and back in.
+  async function refreshSession() {
+    setRefreshing(true);
+    try {
+      const fresh = await getMe();
+      setUser((prev) => {
+        const merged = { ...prev, ...fresh };
+        sessionStorage.setItem('user', JSON.stringify(merged));
+
+        // Surface anything newly granted since the last refresh (e.g. an
+        // admin just approved a pending request) so it doesn't go
+        // unnoticed until the user happens to reload.
+        //
+        // NOTE: GET /auth/me currently only returns { id, name, email } —
+        // it doesn't include permissions (unlike POST /auth/login, which
+        // does build that array). Until that's added, merged.permissions
+        // never actually changes, so this block is a safe no-op today —
+        // it activates automatically the moment the endpoint returns
+        // permissions. Flagged to backend; not something fixable from here.
+        const prevPermissions = Array.isArray(prev?.permissions) ? prev.permissions : [];
+        const newPermissions = Array.isArray(merged.permissions) ? merged.permissions : [];
+        const newlyGranted = newPermissions.filter((p) => !prevPermissions.includes(p));
+
+        if (newlyGranted.length > 0) {
+          const label =
+            newlyGranted.length === 1
+              ? permissionLabel(newlyGranted[0])
+              : `${newlyGranted.length} new features`;
+          setToast({
+            type: 'success',
+            message: `You now have access to ${label}.`,
+          });
+        }
+
+        return merged;
+      });
+    } catch (err) {
+      // Non-fatal — keep showing whatever we already have from
+      // sessionStorage rather than blocking the page.
+      console.error('Failed to refresh session:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     const raw = sessionStorage.getItem('user');
@@ -268,6 +335,10 @@ export default function Dashboard() {
     }
 
     setCheckedStorage(true);
+    // Fire-and-forget refresh right after showing the cached session, so
+    // the page paints immediately but corrects itself if roles changed
+    // since last login.
+    refreshSession();
   }, []);
 
   const openRequestModal = async () => {
@@ -313,9 +384,8 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <Header />
-      <div className="mx-auto max-w-5xl p-6 md:p-10">
+    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+      <div className="mx-auto max-w-5xl">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
@@ -345,13 +415,24 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={openRequestModal}
-            className="self-start rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-900 sm:self-auto"
-          >
-            Request Access
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={refreshSession}
+              disabled={refreshing}
+              title="Pull the latest roles/permissions if an admin just approved a request"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {refreshing ? 'Refreshing…' : 'Refresh access'}
+            </button>
+            <button
+              type="button"
+              onClick={openRequestModal}
+              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-900"
+            >
+              Request Access
+            </button>
+          </div>
         </div>
 
         {/* Feature grid */}
@@ -363,6 +444,7 @@ export default function Dashboard() {
               description={feature.description}
               accent={feature.accent}
               enabled={user.permissions.includes(feature.key)}
+              path={feature.path}
             />
           ))}
         </div>
