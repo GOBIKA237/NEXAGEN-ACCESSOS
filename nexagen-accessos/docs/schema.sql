@@ -7,7 +7,12 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     last_login_at TIMESTAMP,
-    last_login_ip VARCHAR(45)
+    last_login_ip VARCHAR(45),
+    -- JWTs are stateless and otherwise unrevocable, so admin-forced logout
+    -- (e.g. responding to a high-risk alert) works by stamping this and
+    -- having requireAuth reject any token issued before it. NULL = no
+    -- forced invalidation in effect. See middleware/auth.js.
+    tokens_invalid_before TIMESTAMP
 );
 
 CREATE TABLE roles (
