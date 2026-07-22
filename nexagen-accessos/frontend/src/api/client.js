@@ -19,6 +19,35 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Clears the local session. Exported so the logout button and the 401
+// interceptor below share one definition instead of duplicating it.
+export function logout() {
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('user');
+}
+
+// If any authenticated request comes back 401, the token is missing/expired
+// — clear the session and bounce to login. Skip this for the login endpoint
+// itself: a 401 there just means "wrong password" and is already handled
+// as a normal form error by Login.jsx, not a dead session.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    const url = error.config?.url || '';
+    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/register');
+
+    if (status === 401 && !isAuthEndpoint) {
+      logout();
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 // =========================
 // AUTHENTICATION
 // =========================
@@ -75,18 +104,6 @@ export async function getRoles() {
 // =========================
 // ACCESS REQUESTS
 // =========================
-
-// Roles list for the Request Access dropdown — any logged-in user, not
-// admin-only. Separate from getRoles() below, which hits the admin-only
-// /admin/roles used by the Roles management tab.
-export async function getAvailableRoles() {
-  if (USE_MOCK) {
-    return mock.mockRoles;
-  }
-
-  const { data } = await api.get('/roles');
-  return data;
-}
 
 export async function getAccessRequests() {
   if (USE_MOCK) {
