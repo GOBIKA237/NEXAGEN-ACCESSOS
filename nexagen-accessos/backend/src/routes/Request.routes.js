@@ -183,6 +183,8 @@ router.get(
   async (req, res) => {
     const { userId } = req.query;
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 500);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const offset = (page - 1) * limit;
 
     try {
       const params = [];
@@ -191,14 +193,14 @@ router.get(
         params.push(userId);
         where = `WHERE user_id = $${params.length}`;
       }
-      params.push(limit);
+      params.push(limit, offset);
 
       const result = await pool.query(
         `SELECT id, user_id, action, resource, ip_address, device_info, created_at
          FROM audit_logs
          ${where}
          ORDER BY created_at DESC
-         LIMIT $${params.length}`,
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
       );
 
