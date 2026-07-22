@@ -1,8 +1,9 @@
 // Owned by Frontend Dev 2 (UI built for Frontend Dev 3's request). Admin tabs:
 // Users, Roles, Access Requests, Audit Log. Alerts render as a persistent
 // banner above the tabs rather than as their own tab.
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState } from 'react';
 import {
+  api,
   getUsers,
   getRoles,
   getAccessRequests,
@@ -11,6 +12,42 @@ import {
   approveRequest,
   denyRequest,
 } from '../api/client.js';
+
+// --- Roles / permissions / user-role-assignment API calls ----------------
+// Not yet in api/client.js (out of scope for this file's owner to add
+// there), so they're defined locally using the shared `api` axios
+// instance. Shapes per docs/api-contract.md.
+async function getPermissions() {
+  const { data } = await api.get('/admin/permissions');
+  return data;
+}
+
+async function createRole(payload) {
+  const { data } = await api.post('/admin/roles', payload);
+  return data;
+}
+
+async function updateRole(id, payload) {
+  const { data } = await api.put(`/admin/roles/${id}`, payload);
+  return data;
+}
+
+async function deleteRole(id) {
+  await api.delete(`/admin/roles/${id}`);
+}
+
+// `confirm: true` is this frontend's assumption for how to re-submit after
+// a 409 conflict — the backend's PUT /users/:id/roles doesn't currently
+// read any such flag (it always re-runs the same overlap check), so a
+// confirmed retry will 409 again until Backend Dev 2 adds a bypass. Flagged
+// in the PR description; see chat writeup.
+async function updateUserRoles(id, roleIds, { confirm } = {}) {
+  const { data } = await api.put(`/admin/users/${id}/roles`, {
+    roleIds,
+    ...(confirm ? { confirm: true } : {}),
+  });
+  return data;
+}
 
 const TABS = [
   { key: 'users', label: 'Users' },
@@ -71,6 +108,42 @@ function EmptyRow({ colSpan, message }) {
       </td>
     </tr>
   );
+}
+
+// --- Tab error boundary ----------------------------------------------------
+// Isolates a crash (e.g. an unexpected API shape) to the tab that caused it,
+// instead of taking down the whole Admin page. `resetKey` should be the
+// active tab key so switching tabs clears a previous error.
+class TabErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Admin tab crashed:', error, info);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="px-4 py-10 text-center text-sm text-rose-500">
+          Something went wrong loading this tab.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // --- Alert banner --------------------------------------------------------
@@ -177,77 +250,468 @@ function useTabData(fetcher, deps = []) {
 
 // --- Tabs -------------------------------------------------------------
 
+// Roles come back from GET /admin/users as either an array of name strings
+// (per docs/api-contract.md) or, if that field is ever missing, undefined —
+// normalize both so a render never throws on `.map`.
+function userRoleNames(user) {
+  return Array.isArray(user.roles) ? user.roles : [];
+}
+
 function UsersTab() {
-  const [users, status] = useTabData(getUsers);
-  const colSpan = 3;
+  const [users, status, refetchUsers] = useTabData(getUsers);
+  const [allRoles, rolesStatus] = useTabData(getRoles);
+  const [editingUser, setEditingUser] = useState(null);
+  const colSpan = 4;
 
   return (
-    <table className="min-w-full divide-y divide-slate-200 text-sm">
-      <thead className="bg-slate-50">
-        <tr>
-          <th className="px-4 py-3 text-left font-medium text-slate-500">Name</th>
-          <th className="px-4 py-3 text-left font-medium text-slate-500">Email</th>
-          <th className="px-4 py-3 text-left font-medium text-slate-500">Roles</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-100 bg-white">
-        {status === 'loading' && <LoadingRow colSpan={colSpan} />}
-        {status === 'error' && (
-          <ErrorRow colSpan={colSpan} message="Couldn't load users." />
+    <>
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="px-4 py-3 text-left font-medium text-slate-500">Name</th>
+            <th className="px-4 py-3 text-left font-medium text-slate-500">Email</th>
+            <th className="px-4 py-3 text-left font-medium text-slate-500">Roles</th>
+            <th className="px-4 py-3 text-right font-medium text-slate-500">Action</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {status === 'loading' && <LoadingRow colSpan={colSpan} />}
+          {status === 'error' && (
+            <ErrorRow colSpan={colSpan} message="Couldn't load users." />
+          )}
+          {status === 'ready' && users.length === 0 && (
+            <EmptyRow colSpan={colSpan} message="No users found." />
+          )}
+          {status === 'ready' &&
+            users.map((user) => (
+              <tr key={user.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
+                <td className="px-4 py-3 text-slate-500">{user.email}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {userRoleNames(user).length === 0 && (
+                      <span className="text-slate-400">—</span>
+                    )}
+                    {userRoleNames(user).map((role) => (
+                      <StatusPill key={role} tone="slate">
+                        {role}
+                      </StatusPill>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <button
+                    onClick={() => setEditingUser(user)}
+                    disabled={rolesStatus !== 'ready'}
+                    className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Manage roles
+                  </button>
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+
+      {editingUser && (
+        <AssignRolesModal
+          user={editingUser}
+          allRoles={allRoles}
+          onClose={() => setEditingUser(null)}
+          onSaved={() => {
+            setEditingUser(null);
+            refetchUsers();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// --- Assign roles modal ----------------------------------------------------
+
+function AssignRolesModal({ user, allRoles, onClose, onSaved }) {
+  // GET /admin/users currently doesn't return each user's role ids (see
+  // docs/api-contract.md, which says it should) — only name/email come
+  // back today, so there's nothing reliable to pre-check here yet. Falling
+  // back to matching by name against userRoleNames() in case that lands
+  // before the id-based fix does.
+  const initialChecked = new Set(
+    allRoles
+      .filter((role) => userRoleNames(user).includes(role.name))
+      .map((role) => role.id)
+  );
+
+  const [checkedIds, setCheckedIds] = useState(initialChecked);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [conflict, setConflict] = useState(null); // { overlappingPermissions } | null
+
+  function toggle(roleId) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
+      return next;
+    });
+  }
+
+  async function submit({ confirm = false } = {}) {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateUserRoles(user.id, [...checkedIds], { confirm });
+      onSaved();
+    } catch (err) {
+      if (err.response?.status === 409 && err.response.data?.conflict) {
+        setConflict(err.response.data);
+      } else {
+        setError("Couldn't update roles. Try again.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 px-4">
+      <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg">
+        {!conflict ? (
+          <>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Roles for {user.name}
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">{user.email}</p>
+
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
+              {allRoles.map((role) => (
+                <label
+                  key={role.id}
+                  className="flex items-start gap-2 rounded-md px-1 py-1 text-sm hover:bg-slate-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checkedIds.has(role.id)}
+                    onChange={() => toggle(role.id)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium text-slate-800">{role.name}</span>
+                    {role.description && (
+                      <span className="block text-xs text-slate-500">
+                        {role.description}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={onClose}
+                disabled={saving}
+                className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => submit()}
+                disabled={saving}
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save roles'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Overlapping sensitive permissions
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              These roles together grant {user.name} overlapping sensitive
+              permissions:
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {(conflict.overlappingPermissions || []).map((perm) => (
+                <StatusPill key={perm} tone="amber">
+                  {perm}
+                </StatusPill>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs text-slate-500">
+              Confirm to assign these roles anyway.
+            </p>
+
+            {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConflict(null)}
+                disabled={saving}
+                className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => submit({ confirm: true })}
+                disabled={saving}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? 'Applying…' : 'Confirm and apply'}
+              </button>
+            </div>
+          </>
         )}
-        {status === 'ready' && users.length === 0 && (
-          <EmptyRow colSpan={colSpan} message="No users found." />
-        )}
-        {status === 'ready' &&
-          users.map((user) => (
-            <tr key={user.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
-              <td className="px-4 py-3 text-slate-500">{user.email}</td>
-              <td className="px-4 py-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {user.roles.map((role) => (
-                    <StatusPill key={role} tone="slate">
-                      {role}
-                    </StatusPill>
-                  ))}
-                </div>
-              </td>
-            </tr>
-          ))}
-      </tbody>
-    </table>
+      </div>
+    </div>
   );
 }
 
 function RolesTab() {
-  const [roles, status] = useTabData(getRoles);
-  const colSpan = 2;
+  const [roles, status, refetchRoles] = useTabData(getRoles);
+  const [permissions, permStatus] = useTabData(getPermissions);
+  const [editingRole, setEditingRole] = useState(undefined); // undefined = closed, null = "new", object = editing
+  const [deletingId, setDeletingId] = useState(null);
+  const [rowError, setRowError] = useState({});
+  const colSpan = 3;
+  const formReady = permStatus === 'ready';
+
+  async function handleDelete(role) {
+    if (!window.confirm(`Delete the "${role.name}" role? This can't be undone.`)) {
+      return;
+    }
+    setDeletingId(role.id);
+    setRowError((prev) => ({ ...prev, [role.id]: null }));
+    try {
+      await deleteRole(role.id);
+      refetchRoles();
+    } catch (err) {
+      setRowError((prev) => ({
+        ...prev,
+        [role.id]: "Couldn't delete this role. Try again.",
+      }));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
-    <table className="min-w-full divide-y divide-slate-200 text-sm">
-      <thead className="bg-slate-50">
-        <tr>
-          <th className="px-4 py-3 text-left font-medium text-slate-500">Role</th>
-          <th className="px-4 py-3 text-left font-medium text-slate-500">Description</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-100 bg-white">
-        {status === 'loading' && <LoadingRow colSpan={colSpan} />}
-        {status === 'error' && (
-          <ErrorRow colSpan={colSpan} message="Couldn't load roles." />
-        )}
-        {status === 'ready' && roles.length === 0 && (
-          <EmptyRow colSpan={colSpan} message="No roles found." />
-        )}
-        {status === 'ready' &&
-          roles.map((role) => (
-            <tr key={role.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-800">{role.name}</td>
-              <td className="px-4 py-3 text-slate-500">{role.description}</td>
-            </tr>
-          ))}
-      </tbody>
-    </table>
+    <>
+      <div className="flex items-center justify-between px-4 py-3">
+        <h2 className="text-sm font-semibold text-slate-700">Roles</h2>
+        <button
+          onClick={() => setEditingRole(null)}
+          disabled={!formReady}
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          New role
+        </button>
+      </div>
+
+      <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            <th className="px-4 py-3 text-left font-medium text-slate-500">Role</th>
+            <th className="px-4 py-3 text-left font-medium text-slate-500">Description</th>
+            <th className="px-4 py-3 text-right font-medium text-slate-500">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {status === 'loading' && <LoadingRow colSpan={colSpan} />}
+          {status === 'error' && (
+            <ErrorRow colSpan={colSpan} message="Couldn't load roles." />
+          )}
+          {status === 'ready' && roles.length === 0 && (
+            <EmptyRow colSpan={colSpan} message="No roles found." />
+          )}
+          {status === 'ready' &&
+            roles.map((role) => (
+              <tr key={role.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3 font-medium text-slate-800">{role.name}</td>
+                <td className="px-4 py-3 text-slate-500">{role.description}</td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setEditingRole(role)}
+                        disabled={!formReady}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(role)}
+                        disabled={deletingId === role.id}
+                        className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingId === role.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </div>
+                    {rowError[role.id] && (
+                      <span className="text-xs text-rose-500">{rowError[role.id]}</span>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+
+      {editingRole !== undefined && (
+        <RoleFormModal
+          role={editingRole}
+          permissions={permissions}
+          onClose={() => setEditingRole(undefined)}
+          onSaved={() => {
+            setEditingRole(undefined);
+            refetchRoles();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// --- Role create/edit modal -------------------------------------------
+
+function RoleFormModal({ role, permissions, onClose, onSaved }) {
+  const isEdit = !!role;
+  const [name, setName] = useState(role?.name ?? '');
+  const [description, setDescription] = useState(role?.description ?? '');
+  // GET /admin/roles (and the PUT response) don't currently include which
+  // permissions a role already has, so there's nothing to pre-check when
+  // editing — see chat writeup. Track whether the admin actually touches a
+  // checkbox this session so an untouched save doesn't send permissionIds
+  // and silently wipe the role's real permissions.
+  const [checkedIds, setCheckedIds] = useState(new Set());
+  const [permissionsTouched, setPermissionsTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  function toggle(permId) {
+    setPermissionsTouched(true);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(permId)) next.delete(permId);
+      else next.add(permId);
+      return next;
+    });
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setError('Name is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = { name: name.trim(), description };
+      if (permissionsTouched) payload.permissionIds = [...checkedIds];
+
+      if (isEdit) {
+        await updateRole(role.id, payload);
+      } else {
+        await createRole(payload);
+      }
+      onSaved();
+    } catch (err) {
+      setError(
+        err.response?.data?.error ?? "Couldn't save this role. Try again."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 px-4">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg"
+      >
+        <h2 className="text-sm font-semibold text-slate-900">
+          {isEdit ? `Edit ${role.name}` : 'New role'}
+        </h2>
+
+        <label className="mt-4 block text-xs font-medium text-slate-600">
+          Name
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+          />
+        </label>
+
+        <label className="mt-3 block text-xs font-medium text-slate-600">
+          Description
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+          />
+        </label>
+
+        <div className="mt-3">
+          <p className="text-xs font-medium text-slate-600">Permissions</p>
+          {isEdit && !permissionsTouched && (
+            <p className="mt-1 text-xs text-slate-400">
+              Current permissions aren't shown here yet — check a box only if
+              you want to replace this role's permission set.
+            </p>
+          )}
+          <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+            {permissions.map((perm) => (
+              <label
+                key={perm.id}
+                className="flex items-start gap-2 rounded-md px-1 py-1 text-sm hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={checkedIds.has(perm.id)}
+                  onChange={() => toggle(perm.id)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-slate-800">{perm.name}</span>
+                  {perm.description && (
+                    <span className="block text-xs text-slate-500">
+                      {perm.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create role'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -459,10 +923,12 @@ export default function AdminDashboard() {
       <main className="px-6 py-6">
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            {activeTab === 'users' && <UsersTab />}
-            {activeTab === 'roles' && <RolesTab />}
-            {activeTab === 'requests' && <AccessRequestsTab />}
-            {activeTab === 'audit' && <AuditLogTab />}
+            <TabErrorBoundary resetKey={activeTab}>
+              {activeTab === 'users' && <UsersTab />}
+              {activeTab === 'roles' && <RolesTab />}
+              {activeTab === 'requests' && <AccessRequestsTab />}
+              {activeTab === 'audit' && <AuditLogTab />}
+            </TabErrorBoundary>
           </div>
         </div>
       </main>
