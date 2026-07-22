@@ -54,16 +54,18 @@ router.get('/roles/predefined', requireAuth, checkPermission('manage_users'), as
 // PUT /users/:id/roles — body { roleIds: [1,2] }, replace user's roles in user_roles
 router.put('/users/:id/roles', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { id } = req.params;
-  const { roleIds } = req.body;
+  const { roleIds, confirm } = req.body;
 
   if (!Array.isArray(roleIds)) {
     return res.status(400).json({ error: 'roleIds must be an array' });
   }
 
   // A single role can't conflict with itself — only check when 2+ distinct
-  // roles are being assigned together.
+  // roles are being assigned together. Skipped entirely when the caller has
+  // already confirmed the conflict once (confirm: true) and wants to apply
+  // the roles anyway.
   const distinctRoleIds = [...new Set(roleIds)];
-  if (distinctRoleIds.length > 1) {
+  if (!confirm && distinctRoleIds.length > 1) {
     const { rows: overlapRows } = await pool.query(
       `SELECT p.name
        FROM role_permissions rp
