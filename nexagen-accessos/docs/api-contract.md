@@ -45,13 +45,20 @@ Response 200: `[{ id, user: {...}, requestedRole: {...}, requestedAt }]`
 Request: `{ status: "approved" | "denied" }`
 Response 200: `{ id, status }`
 
-### GET /admin/audit-logs?limit=50&userId=
+### GET /admin/audit-logs?limit=50&page=1&userId=
 Response 200: `[{ id, user, action, resource, ipAddress, createdAt }]`
 
 ## Rules Engine / Alerts — Lead
 
-### GET /admin/alerts
+### GET /admin/alerts?minScore=50&page=1&limit=20
 Response 200: `[{ id, userId, riskScore, reason, createdAt }]`
+
+### POST /admin/alerts/:id/invalidate-session
+`:id` is the alert's `id` (the underlying `login_events` row), not a user id.
+Forces that user's current token(s) to stop passing `requireAuth` — see
+`tokens_invalid_before` in schema.sql (schema change, team notified).
+Response 200: `{ message, user: { id, name, email, tokensInvalidBefore } }`
+Response 404 if the alert id doesn't exist.
 
 ## Route protection
 Every route above except `/auth/*` uses:
