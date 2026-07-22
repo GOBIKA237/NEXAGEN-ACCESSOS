@@ -3,7 +3,9 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { pool } from '../config/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { scoreLogin } from '../utils/rulesEngine.js';
 
+// Owned by Backend Dev 1. Fill in error handling / validation as you build.
 const router = Router();
 
 router.post('/register', async (req, res) => {
@@ -19,22 +21,15 @@ router.post('/register', async (req, res) => {
        RETURNING id, name, email`,
       [name, email, hash]
     );
+    const newUser = rows[0];
 
-    // Assign default 'employee' role
-    const { rows: roleRows } = await pool.query(
-      `SELECT id FROM roles WHERE name = 'employee'`
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role_id)
+       SELECT $1, id FROM roles WHERE name = 'employee'`,
+      [newUser.id]
     );
-    if (roleRows.length === 0) {
-      // Shouldn't happen since schema.sql seeds this role, but fail loudly if it's missing
-      console.error("Default role 'employee' not found in roles table");
-    } else {
-      await pool.query(
-        `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
-        [rows[0].id, roleRows[0].id]
-      );
-    }
 
-    res.status(201).json(rows[0]);
+    res.status(201).json(newUser);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email already registered' });
     console.error(err);
@@ -44,6 +39,8 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
+  const ipAddress = req.ip;
+  const deviceFingerprint = req.headers['user-agent'];
 
   try {
     const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
@@ -51,12 +48,29 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
-    // TODO: call rules engine here to score this login (new device / odd hour)
-    // and insert into login_events before issuing the token.
+    // Insert the attempt into login_events regardless of outcome, now that
+    // we have a user.id to attach it to. risk_score starts at 0 and is
+    // updated below only on a successful password match.
+    const { rows: eventRows } = await pool.query(
+      `INSERT INTO login_events (user_id, success, ip_address, device_fingerprint, risk_score)
+       VALUES ($1, $2, $3, $4, 0)
+       RETURNING id`,
+      [user.id, match, ipAddress, deviceFingerprint]
+    );
+    const loginEventId = eventRows[0].id;
 
-    // Roles assigned to this user
+    if (!match) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Score this login and update the row just inserted.
+    const riskScore = await scoreLogin({ userId: user.id, deviceFingerprint });
+    await pool.query(
+      `UPDATE login_events SET risk_score = $1 WHERE id = $2`,
+      [riskScore, loginEventId]
+    );
+
     const { rows: roleRows } = await pool.query(
       `SELECT r.name
        FROM roles r
@@ -66,7 +80,6 @@ router.post('/login', async (req, res) => {
     );
     const roles = roleRows.map((r) => r.name);
 
-    // Combined, deduped permissions across all of the user's roles
     const { rows: permRows } = await pool.query(
       `SELECT DISTINCT p.name
        FROM permissions p
@@ -81,10 +94,7 @@ router.post('/login', async (req, res) => {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
 
-    res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email, roles, permissions },
-    });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, roles, permissions } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed' });
