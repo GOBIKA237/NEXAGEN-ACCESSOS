@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { requestAccess, getRoles } from '../api/client.js';
+import { requestAccess, getAvailableRoles } from '../api/client.js';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -256,7 +256,7 @@ export default function Dashboard() {
     setModalOpen(true);
     setRolesError(null);
     try {
-      const data = await getRoles();
+      const data = await getAvailableRoles();
       setRoles(data);
     } catch (err) {
       console.error('Failed to load roles:', err);
