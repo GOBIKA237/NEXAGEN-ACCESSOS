@@ -18,8 +18,12 @@ const DEFAULT_MIN_SCORE = 50;
 
 // GET /admin/alerts?minScore=&page=&limit=
 // requireAuth + checkPermission('manage_users'), same as every other admin route.
+// Mounted at /api/admin in index.js, so this stays '/alerts' (not
+// '/admin/alerts') to match how rbac.routes.js defines its own paths —
+// the old '/admin/alerts' here doubled up to /api/admin/admin/alerts and
+// 404'd every time.
 router.get(
-  '/admin/alerts',
+  '/alerts',
   requireAuth,
   checkPermission('manage_users'),
   async (req, res) => {
