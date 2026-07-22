@@ -8,10 +8,26 @@ import { scoreLogin } from '../utils/rulesEngine.js';
 // Owned by Backend Dev 1. Fill in error handling / validation as you build.
 const router = Router();
 
+// Deliberately simple/permissive — good enough to catch obviously malformed
+// input without rejecting valid-but-unusual addresses. Not a full RFC 5322
+// implementation.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD_LENGTH = 8;
+
 router.post('/register', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'name, email, password are required' });
+  }
+
+  if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
+    return res.status(400).json({ error: 'Please provide a valid email address' });
+  }
+
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    return res
+      .status(400)
+      .json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long` });
   }
 
   try {
@@ -102,11 +118,19 @@ router.post('/login', async (req, res) => {
 });
 
 router.get('/me', requireAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    'SELECT id, name, email FROM users WHERE id = $1',
-    [req.user.id]
-  );
-  res.json(rows[0]);
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, email FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load current user' });
+  }
 });
 
 export default router;
