@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { requestAccess, getAvailableRoles } from '../api/client.js';
+import { requestAccess, getRoles } from '../api/client.js';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -130,16 +130,16 @@ function DashboardSkeleton() {
   );
 }
 
-function RequestAccessModal({ roles, rolesError, onClose, onSubmit, submitting }) {
+function RequestAccessModal({ roles, rolesStatus, onClose, onSubmit, submitting }) {
   const [selectedRoleId, setSelectedRoleId] = useState('');
 
   // roles load asynchronously after the modal opens, so default the
   // selection once they arrive instead of only on mount.
   useEffect(() => {
-    if (roles.length > 0 && !selectedRoleId) {
+    if (rolesStatus === 'ready' && roles.length > 0 && !selectedRoleId) {
       setSelectedRoleId(roles[0].id);
     }
-  }, [roles, selectedRoleId]);
+  }, [rolesStatus, roles, selectedRoleId]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -147,7 +147,7 @@ function RequestAccessModal({ roles, rolesError, onClose, onSubmit, submitting }
     onSubmit(role);
   };
 
-  const canSubmit = !rolesError && roles.length > 0;
+  const canSubmit = rolesStatus === 'ready' && roles.length > 0;
 
   return (
     <div
@@ -173,13 +173,29 @@ function RequestAccessModal({ roles, rolesError, onClose, onSubmit, submitting }
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          {rolesError ? (
+          {rolesStatus === 'loading' && (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span
+                className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+                aria-hidden="true"
+              />
+              Loading roles…
+            </div>
+          )}
+
+          {rolesStatus === 'error' && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              {rolesError}
+              Could not load the list of roles. Please try again.
             </p>
-          ) : roles.length === 0 ? (
-            <p className="text-sm text-slate-500">Loading roles…</p>
-          ) : (
+          )}
+
+          {rolesStatus === 'ready' && roles.length === 0 && (
+            <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
+              No roles are available to request right now.
+            </p>
+          )}
+
+          {rolesStatus === 'ready' && roles.length > 0 && (
             <div>
               <label htmlFor="role" className="block text-sm font-medium text-slate-700">
                 Role
@@ -228,7 +244,7 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
   const [roles, setRoles] = useState([]);
-  const [rolesError, setRolesError] = useState(null);
+  const [rolesStatus, setRolesStatus] = useState('idle'); // idle | loading | ready | error
 
   useEffect(() => {
     const raw = sessionStorage.getItem('user');
@@ -254,13 +270,14 @@ export default function Dashboard() {
 
   const openRequestModal = async () => {
     setModalOpen(true);
-    setRolesError(null);
+    setRolesStatus('loading');
     try {
-      const data = await getAvailableRoles();
+      const data = await getRoles();
       setRoles(data);
+      setRolesStatus('ready');
     } catch (err) {
       console.error('Failed to load roles:', err);
-      setRolesError('Could not load the list of roles. Please try again.');
+      setRolesStatus('error');
     }
   };
 
@@ -346,12 +363,85 @@ export default function Dashboard() {
             />
           ))}
         </div>
+
+        {/* Roles & permissions — read straight from sessionStorage, no API call */}
+        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-slate-800">My roles & permissions</h2>
+
+          <div className="mt-3">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Roles
+            </h3>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {user.roles.length > 0 ? (
+                user.roles.map((role) => (
+                  <span
+                    key={role}
+                    className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-700"
+                  >
+                    {role}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs font-medium italic text-slate-400">
+                  No roles assigned yet
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Permissions
+            </h3>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {user.permissions.length > 0 ? (
+                user.permissions.map((permission) => (
+                  <span
+                    key={permission}
+                    className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
+                  >
+                    {permission}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs font-medium italic text-slate-400">
+                  No permissions granted yet
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* My requests — BLOCKED: no GET endpoint scoped to the current
+            user's own access requests exists yet. The only related route is
+            GET /admin/access-requests, which requires checkPermission
+            ('manage_users') and returns everyone's requests, not "mine" — an
+            ordinary employee would get a 403 from it. Needs a new endpoint
+            (e.g. GET /access-requests/me) from Backend 1 (auth.routes.js) or
+            Backend 2 (rbac.routes.js) before this can be wired up for real.
+            Stubbing the shell so the section exists and the gap is visible,
+            not guessing a response shape. */}
+        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-800">My requests</h2>
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+              Blocked
+            </span>
+          </div>
+          <p className="mt-2 text-sm text-slate-500">
+            This section will show the status of your access requests
+            (pending / approved / denied). It's blocked on a backend
+            endpoint scoped to the current user — check with Backend 1 or
+            Backend 2 on adding one.
+          </p>
+        </div>
       </div>
 
       {modalOpen && (
         <RequestAccessModal
           roles={roles}
-          rolesError={rolesError}
+          rolesStatus={rolesStatus}
           onClose={() => setModalOpen(false)}
           onSubmit={handleRequestSubmit}
           submitting={submitting}
