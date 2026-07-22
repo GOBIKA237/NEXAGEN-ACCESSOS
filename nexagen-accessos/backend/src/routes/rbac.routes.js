@@ -188,6 +188,17 @@ router.put('/roles/:id', requireAuth, checkPermission('manage_users'), async (re
 router.delete('/roles/:id', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { id } = req.params;
 
+  const { rows: assignedRows } = await pool.query(
+    'SELECT user_id FROM user_roles WHERE role_id = $1 LIMIT 1',
+    [id]
+  );
+
+  if (assignedRows.length > 0) {
+    return res.status(409).json({
+      error: 'Role is still assigned to one or more users and cannot be deleted. Unassign it first.',
+    });
+  }
+
   const { rows } = await pool.query('DELETE FROM roles WHERE id = $1 RETURNING id', [id]);
 
   if (rows.length === 0) {
