@@ -2,6 +2,7 @@
 // Users, Roles, Access Requests, Audit Log. Alerts render as a persistent
 // banner above the tabs rather than as their own tab.
 import { Component, useEffect, useState } from 'react';
+import Header from '../components/Header.jsx';
 import {
   api,
   getUsers,
@@ -993,6 +994,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <Header />
       <AlertBanner />
 
       <header className="border-b border-slate-200 bg-white px-6 pt-6">
