@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 import FinanceDashboard from './pages/FinanceDashboard.jsx';
 import HRDashboard from './pages/HRDashboard.jsx';
+import ManagerDashboard from './pages/ManagerDashboard.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 // Frontend Dev 1 owns Login.jsx + Dashboard.jsx
@@ -55,6 +56,14 @@ export default function App() {
           element={
             <ProtectedRoute requireRole="admin">
               <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/manager"
+          element={
+            <ProtectedRoute requireRole="manager">
+              <ManagerDashboard />
             </ProtectedRoute>
           }
         />
