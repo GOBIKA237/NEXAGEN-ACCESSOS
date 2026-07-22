@@ -101,6 +101,19 @@ export async function getRoles() {
   return data;
 }
 
+// Roles list for the Request Access dropdown — any logged-in user, not
+// admin-only. Hits GET /roles (Request.routes.js), which is deliberately
+// separate from the admin-only GET /admin/roles above so employees without
+// manage_users can still see what roles exist to request.
+export async function getAvailableRoles() {
+  if (USE_MOCK) {
+    return mock.mockRoles;
+  }
+
+  const { data } = await api.get('/roles');
+  return data;
+}
+
 // =========================
 // ACCESS REQUESTS
 // =========================
