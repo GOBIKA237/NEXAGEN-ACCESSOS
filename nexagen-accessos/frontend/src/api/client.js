@@ -75,6 +75,14 @@ export async function register(name, email, password) {
   return data;
 }
 
+// Backs Dashboard.jsx's refreshSession() — GET /auth/me re-reads current
+// roles/permissions from the DB so an admin's approval shows up without a
+// re-login. See auth.routes.js for the route.
+export async function getMe() {
+  const { data } = await api.get('/auth/me');
+  return data;
+}
+
 // =========================
 // ADMIN - USERS
 // =========================
