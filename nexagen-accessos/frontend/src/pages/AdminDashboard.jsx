@@ -54,6 +54,7 @@ const TABS = [
   { key: 'roles', label: 'Roles' },
   { key: 'requests', label: 'Access Requests' },
   { key: 'audit', label: 'Audit Log' },
+  { key: 'alerts', label: 'Alerts' },
 ];
 
 function formatDate(iso) {
@@ -248,6 +249,62 @@ function useTabData(fetcher, deps = []) {
   return [data, status, refetch];
 }
 
+// --- Alerts tab -------------------------------------------------------
+// Alerts already surface as a dismissible banner (above); this is the
+// same GET /admin/alerts data as a browsable list, for anyone who dismissed
+// the banner or wants the full history rather than just what's currently
+// undismissed. Response shape confirmed against backend/src/routes/
+// alerts.routes.js: [{ id, userId, riskScore, reason, createdAt }] —
+// matches docs/api-contract.md exactly, no surprises there. (See chat
+// writeup for a routing issue found in that same file that means this
+// currently 404s regardless of shape.)
+function AlertsTab() {
+  const [alerts, status] = useTabData(getAlerts);
+  const colSpan = 4;
+
+  return (
+    <table className="min-w-full divide-y divide-slate-200 text-sm">
+      <thead className="bg-slate-50">
+        <tr>
+          <th className="px-4 py-3 text-left font-medium text-slate-500">Risk</th>
+          <th className="px-4 py-3 text-left font-medium text-slate-500">Reason</th>
+          <th className="px-4 py-3 text-left font-medium text-slate-500">User</th>
+          <th className="px-4 py-3 text-left font-medium text-slate-500">When</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {status === 'loading' && <LoadingRow colSpan={colSpan} />}
+        {status === 'error' && (
+          <ErrorRow colSpan={colSpan} message="Couldn't load alerts." />
+        )}
+        {status === 'ready' && alerts.length === 0 && (
+          <EmptyRow colSpan={colSpan} message="No alerts." />
+        )}
+        {status === 'ready' &&
+          alerts.map((alert) => {
+            const high = alert.riskScore > 50;
+            return (
+              <tr key={alert.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3">
+                  <StatusPill tone={high ? 'red' : 'amber'}>
+                    {alert.riskScore}
+                  </StatusPill>
+                </td>
+                <td className="px-4 py-3 text-slate-700">{alert.reason}</td>
+                <td className="px-4 py-3 text-slate-500">
+                  User #{alert.userId}
+                </td>
+                <td className="px-4 py-3 text-slate-500">
+                  {formatDate(alert.createdAt)}
+                </td>
+              </tr>
+            );
+          })}
+      </tbody>
+    </table>
+  );
+}
+
 // --- Tabs -------------------------------------------------------------
 
 // Roles come back from GET /admin/users as either an array of name strings
@@ -261,10 +318,47 @@ function UsersTab() {
   const [users, status, refetchUsers] = useTabData(getUsers);
   const [allRoles, rolesStatus] = useTabData(getRoles);
   const [editingUser, setEditingUser] = useState(null);
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
   const colSpan = 4;
+
+  const q = query.trim().toLowerCase();
+  const filteredUsers = users.filter((user) => {
+    const matchesQuery =
+      !q ||
+      user.name?.toLowerCase().includes(q) ||
+      user.email?.toLowerCase().includes(q);
+    const matchesRole =
+      roleFilter === 'all' || userRoleNames(user).includes(roleFilter);
+    return matchesQuery && matchesRole;
+  });
+  const isFiltered = q.length > 0 || roleFilter !== 'all';
 
   return (
     <>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by name or email…"
+          className="w-56 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+        />
+        <select
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+          disabled={rolesStatus !== 'ready'}
+          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm disabled:opacity-50"
+        >
+          <option value="all">All roles</option>
+          {allRoles.map((role) => (
+            <option key={role.id} value={role.name}>
+              {role.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <table className="min-w-full divide-y divide-slate-200 text-sm">
         <thead className="bg-slate-50">
           <tr>
@@ -282,8 +376,18 @@ function UsersTab() {
           {status === 'ready' && users.length === 0 && (
             <EmptyRow colSpan={colSpan} message="No users found." />
           )}
+          {status === 'ready' && users.length > 0 && filteredUsers.length === 0 && (
+            <EmptyRow
+              colSpan={colSpan}
+              message={
+                isFiltered
+                  ? 'No users match your search.'
+                  : 'No users found.'
+              }
+            />
+          )}
           {status === 'ready' &&
-            users.map((user) => (
+            filteredUsers.map((user) => (
               <tr key={user.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium text-slate-800">{user.name}</td>
                 <td className="px-4 py-3 text-slate-500">{user.email}</td>
@@ -928,6 +1032,7 @@ export default function AdminDashboard() {
               {activeTab === 'roles' && <RolesTab />}
               {activeTab === 'requests' && <AccessRequestsTab />}
               {activeTab === 'audit' && <AuditLogTab />}
+              {activeTab === 'alerts' && <AlertsTab />}
             </TabErrorBoundary>
           </div>
         </div>
