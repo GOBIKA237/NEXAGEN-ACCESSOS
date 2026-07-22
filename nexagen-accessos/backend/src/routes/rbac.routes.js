@@ -5,6 +5,13 @@ import { checkPermission } from '../middleware/checkPermission.js';
 
 const router = Router();
 
+// Permissions worth flagging when 2+ of the roles being assigned to a user
+// all grant them. Ordinary overlap between roles is expected and fine (e.g.
+// two roles both granting view_audit_log isn't a problem) — this list is
+// for elevated/sensitive grants where stacking them is likely unintentional
+// and worth an explicit admin confirmation instead of silently applying.
+const CONFLICT_WATCHLIST_PERMISSIONS = ['manage_users'];
+
 router.get('/users', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { rows } = await pool.query('SELECT id, name, email FROM users');
   res.json(rows);
@@ -15,6 +22,35 @@ router.get('/roles', requireAuth, checkPermission('manage_users'), async (req, r
   res.json(rows);
 });
 
+// The 4 starter roles seeded in docs/schema.sql. Keep this list in sync if
+// that seed data ever changes.
+const PREDEFINED_ROLE_NAMES = ['admin', 'finance', 'hr', 'employee'];
+
+// GET /roles/predefined — the seeded starter roles with their current
+// permission sets attached, for one-click assignment in the admin UI.
+// Permissions are read live from role_permissions, not hardcoded, so this
+// stays correct if someone edits a predefined role's grants later.
+router.get('/roles/predefined', requireAuth, checkPermission('manage_users'), async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT r.id, r.name, r.description,
+            COALESCE(
+              json_agg(
+                json_build_object('id', p.id, 'name', p.name, 'description', p.description)
+              ) FILTER (WHERE p.id IS NOT NULL),
+              '[]'
+            ) AS permissions
+     FROM roles r
+     LEFT JOIN role_permissions rp ON rp.role_id = r.id
+     LEFT JOIN permissions p ON p.id = rp.permission_id
+     WHERE r.name = ANY($1::text[])
+     GROUP BY r.id
+     ORDER BY r.id`,
+    [PREDEFINED_ROLE_NAMES]
+  );
+
+  res.json(rows);
+});
+
 // PUT /users/:id/roles — body { roleIds: [1,2] }, replace user's roles in user_roles
 router.put('/users/:id/roles', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { id } = req.params;
@@ -22,6 +58,30 @@ router.put('/users/:id/roles', requireAuth, checkPermission('manage_users'), asy
 
   if (!Array.isArray(roleIds)) {
     return res.status(400).json({ error: 'roleIds must be an array' });
+  }
+
+  // A single role can't conflict with itself — only check when 2+ distinct
+  // roles are being assigned together.
+  const distinctRoleIds = [...new Set(roleIds)];
+  if (distinctRoleIds.length > 1) {
+    const { rows: overlapRows } = await pool.query(
+      `SELECT p.name
+       FROM role_permissions rp
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE rp.role_id = ANY($1::int[])
+         AND p.name = ANY($2::text[])
+       GROUP BY p.name
+       HAVING COUNT(DISTINCT rp.role_id) > 1`,
+      [distinctRoleIds, CONFLICT_WATCHLIST_PERMISSIONS]
+    );
+
+    if (overlapRows.length > 0) {
+      return res.status(409).json({
+        conflict: true,
+        message: 'These roles grant overlapping sensitive permissions — confirm before assigning.',
+        overlappingPermissions: overlapRows.map((r) => r.name)
+      });
+    }
   }
 
   const client = await pool.connect();
@@ -60,14 +120,14 @@ router.put('/users/:id/roles', requireAuth, checkPermission('manage_users'), asy
 router.post('/roles', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { name, description } = req.body;
 
-  if (!name) {
+  if (typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ error: 'name is required' });
   }
 
   try {
     const { rows } = await pool.query(
       'INSERT INTO roles (name, description) VALUES ($1, $2) RETURNING *',
-      [name, description ?? null]
+      [name.trim(), description ?? null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -147,14 +207,14 @@ router.get('/permissions', requireAuth, checkPermission('manage_users'), async (
 router.post('/permissions', requireAuth, checkPermission('manage_users'), async (req, res) => {
   const { name, description } = req.body;
 
-  if (!name) {
+  if (typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ error: 'name is required' });
   }
 
   try {
     const { rows } = await pool.query(
       'INSERT INTO permissions (name, description) VALUES ($1, $2) RETURNING *',
-      [name, description ?? null]
+      [name.trim(), description ?? null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
