@@ -5,6 +5,22 @@ import { checkPermission } from '../middleware/checkPermission.js';
 
 const router = Router();
 
+// GET /roles — any authenticated user, not admin-only. Returns just the
+// safe fields (id/name/description) so the Request Access dropdown on the
+// user dashboard can populate. Deliberately separate from the admin-only
+// GET /admin/roles in rbac.routes.js, which stays locked to manage_users.
+router.get('/roles', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, description FROM roles ORDER BY name'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error fetching roles:', err);
+    res.status(500).json({ error: 'Failed to fetch roles' });
+  }
+});
+
 // POST /access-requests
 // Any logged-in user. Body: { requestedRoleId }
 router.post('/access-requests', requireAuth, async (req, res) => {
