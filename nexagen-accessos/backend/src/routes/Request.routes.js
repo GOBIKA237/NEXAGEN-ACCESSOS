@@ -191,20 +191,46 @@ router.get(
       let where = '';
       if (userId) {
         params.push(userId);
-        where = `WHERE user_id = $${params.length}`;
+        where = `WHERE al.user_id = $${params.length}`;
       }
       params.push(limit, offset);
 
       const result = await pool.query(
-        `SELECT id, user_id, action, resource, ip_address, device_info, created_at
-         FROM audit_logs
+        `SELECT
+           al.id,
+           al.action,
+           al.resource,
+           al.ip_address,
+           al.created_at,
+           u.id    AS user_id,
+           u.email AS user_email,
+           u.name  AS user_name
+         FROM audit_logs al
+         LEFT JOIN users u ON u.id = al.user_id
          ${where}
-         ORDER BY created_at DESC
+         ORDER BY al.created_at DESC
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
       );
 
-      return res.json(result.rows);
+      // Shape rows to match docs/api-contract.md:
+      // [{ id, user, action, resource, ipAddress, createdAt }]
+      // LEFT JOIN (not JOIN) because audit_logs.user_id has no NOT NULL
+      // constraint or ON DELETE CASCADE — a row whose user no longer
+      // exists should still show up, just with user: null instead of
+      // silently vanishing.
+      const shaped = result.rows.map((row) => ({
+        id: row.id,
+        user: row.user_id
+          ? { id: row.user_id, email: row.user_email, name: row.user_name }
+          : null,
+        action: row.action,
+        resource: row.resource,
+        ipAddress: row.ip_address,
+        createdAt: row.created_at,
+      }));
+
+      return res.json(shaped);
     } catch (err) {
       console.error('Error fetching audit logs:', err);
       return res.status(500).json({ error: 'Failed to fetch audit logs' });
