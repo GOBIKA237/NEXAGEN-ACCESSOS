@@ -226,3 +226,29 @@ export async function denyRequest(id) {
 
   return data;
 }
+
+// =========================
+// MY ACCESS REQUESTS (mine) — Frontend Dev 1
+// =========================
+// Backs the "My requests" section in Dashboard.jsx. Backend Dev 1 is
+// still building GET /access-requests/me — it isn't in
+// docs/api-contract.md or Request.routes.js yet — so this is gated on
+// its own flag rather than the shared USE_MOCK above (USE_MOCK is for
+// switching the *whole app* to mock data; this endpoint specifically
+// doesn't exist on the real backend yet regardless of that flag).
+//
+// Flip MY_ACCESS_REQUESTS_LIVE to true once the endpoint ships. The mock
+// data in mockData.js mirrors the shape Backend Dev 1 documented
+// (resource, requested access, dates, status, manager decision, admin
+// decision, comments) so this swap shouldn't require any changes in
+// Dashboard.jsx — only here, if the real field names end up differing.
+const MY_ACCESS_REQUESTS_LIVE = false;
+
+export async function getMyAccessRequests() {
+  if (!MY_ACCESS_REQUESTS_LIVE) {
+    return mock.mockMyAccessRequests;
+  }
+
+  const { data } = await api.get('/access-requests/me');
+  return data;
+}
