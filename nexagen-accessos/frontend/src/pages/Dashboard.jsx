@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { requestAccess, getAvailableRoles, getMe } from '../api/client.js';
+import { requestAccess, getAvailableRoles, getMe, getMyAccessRequests } from '../api/client.js';
+import Header from '../components/Header.jsx';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -43,13 +44,59 @@ function permissionLabel(key) {
   return FEATURES.find((f) => f.key === key)?.title ?? key;
 }
 
-function initials(name) {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+// Human-readable label + pill color for each access_requests.status value.
+// Falls back to the raw value for anything unrecognized so a future status
+// doesn't render as a blank cell.
+const STATUS_LABELS = {
+  PENDING_MANAGER: { label: 'Pending manager review', tone: 'amber' },
+  PENDING_ADMIN: { label: 'Pending admin review', tone: 'amber' },
+  APPROVED: { label: 'Approved', tone: 'green' },
+  REJECTED: { label: 'Rejected', tone: 'red' },
+  REVOKED: { label: 'Revoked', tone: 'slate' },
+};
+
+function statusInfo(status) {
+  return STATUS_LABELS[status] ?? { label: status, tone: 'slate' };
+}
+
+const STATUS_PILL_TONES = {
+  slate: 'bg-slate-100 text-slate-700',
+  green: 'bg-emerald-100 text-emerald-700',
+  red: 'bg-rose-100 text-rose-700',
+  amber: 'bg-amber-100 text-amber-700',
+};
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+// Renders a manager/admin decision cell: the decision itself plus its
+// comment (if any), or "Awaiting review" while that stage hasn't happened
+// yet.
+function DecisionCell({ decision }) {
+  if (!decision) {
+    return <span className="text-xs italic text-slate-400">Awaiting review</span>;
+  }
+
+  const tone = decision.decision === 'APPROVED' ? 'green' : 'red';
+  const label = decision.decision === 'APPROVED' ? 'Approved' : 'Rejected';
+
+  return (
+    <div>
+      <span
+        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_PILL_TONES[tone]}`}
+      >
+        {label}
+      </span>
+      {decision.comment && (
+        <p className="mt-1 text-xs text-slate-500">{decision.comment}</p>
+      )}
+    </div>
+  );
 }
 
 function FeatureCard({ title, description, accent, enabled, path }) {
@@ -123,8 +170,9 @@ function Toast({ type, message, onDismiss }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-5xl animate-pulse">
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <div className="mx-auto max-w-5xl animate-pulse p-6 md:p-10">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-full bg-slate-200" />
@@ -266,6 +314,8 @@ export default function Dashboard() {
   const [roles, setRoles] = useState([]);
   const [rolesStatus, setRolesStatus] = useState('idle'); // idle | loading | ready | error
   const [refreshing, setRefreshing] = useState(false);
+  const [myRequests, setMyRequests] = useState([]);
+  const [myRequestsStatus, setMyRequestsStatus] = useState('idle'); // idle | loading | ready | error
 
   // Pulls the latest roles/permissions from the server and writes them
   // back into sessionStorage + state. Called on mount and from the manual
@@ -341,6 +391,33 @@ export default function Dashboard() {
     refreshSession();
   }, []);
 
+  // Loads the current user's own access requests for the "My requests"
+  // section. Separate effect (rather than folded into the session-check
+  // effect above) so a failure here never blocks the rest of the page
+  // from rendering.
+  useEffect(() => {
+    if (!checkedStorage) return;
+
+    let cancelled = false;
+    setMyRequestsStatus('loading');
+
+    getMyAccessRequests()
+      .then((data) => {
+        if (cancelled) return;
+        setMyRequests(data);
+        setMyRequestsStatus('ready');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Failed to load my access requests:', err);
+        setMyRequestsStatus('error');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [checkedStorage]);
+
   const openRequestModal = async () => {
     setModalOpen(true);
     setRolesStatus('loading');
@@ -384,36 +461,19 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-5xl">
-        {/* Header */}
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <div className="mx-auto max-w-5xl p-6 md:p-10">
+        {/* Page toolbar — identity + logout now live in the shared
+            <Header /> above; this keeps only what's specific to this page
+            (a greeting, plus the two action buttons Header doesn't have).
+            Roles are still shown in full below in "My roles & permissions",
+            so dropping the duplicate role pills that used to be up here
+            isn't a loss of information. */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-sm font-semibold text-white">
-              {initials(user.name)}
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-slate-800">
-                Welcome, {user.name}
-              </h1>
-              <div className="mt-1 flex flex-wrap gap-1.5">
-                {user.roles.length > 0 ? (
-                  user.roles.map((role) => (
-                    <span
-                      key={role}
-                      className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-700"
-                    >
-                      {role}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-xs font-medium italic text-slate-400">
-                    No roles assigned yet
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+          <h1 className="text-xl font-semibold text-slate-800">
+            Welcome, {user.name}
+          </h1>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
@@ -498,28 +558,72 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* My requests — BLOCKED: no GET endpoint scoped to the current
-            user's own access requests exists yet. The only related route is
-            GET /admin/access-requests, which requires checkPermission
-            ('manage_users') and returns everyone's requests, not "mine" — an
-            ordinary employee would get a 403 from it. Needs a new endpoint
-            (e.g. GET /access-requests/me) from Backend 1 (auth.routes.js) or
-            Backend 2 (rbac.routes.js) before this can be wired up for real.
-            Stubbing the shell so the section exists and the gap is visible,
-            not guessing a response shape. */}
-        <div className="mt-8 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
+        {/* My requests — wired up against GET /access-requests/me. Backend
+            Dev 1 hasn't shipped that endpoint yet (see client.js), so this
+            currently renders the documented-shape mock data; the table
+            itself doesn't need to change once the real endpoint lands. */}
+        <div className="mt-8 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between p-5 pb-0">
             <h2 className="font-semibold text-slate-800">My requests</h2>
-            <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-              Blocked
-            </span>
           </div>
-          <p className="mt-2 text-sm text-slate-500">
-            This section will show the status of your access requests
-            (pending / approved / denied). It's blocked on a backend
-            endpoint scoped to the current user — check with Backend 1 or
-            Backend 2 on adding one.
-          </p>
+
+          <div className="mt-4 overflow-x-auto">
+            {myRequestsStatus === 'loading' && (
+              <p className="px-5 pb-5 text-sm text-slate-400">Loading your requests…</p>
+            )}
+
+            {myRequestsStatus === 'error' && (
+              <p className="px-5 pb-5 text-sm text-rose-500">
+                Couldn't load your access requests. Please try again later.
+              </p>
+            )}
+
+            {myRequestsStatus === 'ready' && myRequests.length === 0 && (
+              <p className="px-5 pb-5 text-sm text-slate-400">
+                You haven't requested any access yet.
+              </p>
+            )}
+
+            {myRequestsStatus === 'ready' && myRequests.length > 0 && (
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Resource</th>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Requested access</th>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Requested</th>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Status</th>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Manager decision</th>
+                    <th className="px-5 py-3 text-left font-medium text-slate-500">Admin decision</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {myRequests.map((req) => {
+                    const { label, tone } = statusInfo(req.status);
+                    return (
+                      <tr key={req.id}>
+                        <td className="px-5 py-3 font-medium text-slate-800">{req.resource}</td>
+                        <td className="px-5 py-3 capitalize text-slate-600">{req.requestedAccess}</td>
+                        <td className="px-5 py-3 text-slate-500">{formatDate(req.requestedAt)}</td>
+                        <td className="px-5 py-3">
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_PILL_TONES[tone]}`}
+                          >
+                            {label}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <DecisionCell decision={req.managerDecision} />
+                        </td>
+                        <td className="px-5 py-3">
+                          <DecisionCell decision={req.adminDecision} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
 
