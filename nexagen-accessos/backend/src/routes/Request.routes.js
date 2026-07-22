@@ -15,10 +15,6 @@ router.post('/access-requests', requireAuth, async (req, res) => {
   }
 
   try {
-    console.log('[access-requests] inserting request', {
-      userId: req.user.id,
-      requestedRoleId,
-    });
     const result = await pool.query(
       `INSERT INTO access_requests (user_id, requested_role_id, status)
        VALUES ($1, $2, 'pending')
@@ -50,7 +46,6 @@ router.get(
         where = `WHERE ar.status = $${params.length}`;
       }
 
-      console.log('[admin/access-requests] fetching requests', { status });
       const result = await pool.query(
         `SELECT
            ar.id,
