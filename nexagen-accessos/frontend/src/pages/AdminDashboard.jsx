@@ -344,6 +344,29 @@ function AccessRequestsTab() {
   );
 }
 
+// The backend currently returns audit rows as raw snake_case columns with
+// no joined `user` object (user_id only) — that mismatches what the API
+// contract promises (`{ user, ipAddress, createdAt }`) and was the actual
+// reason this tab looked empty: `log.user.name` threw on every row since
+// `log.user` was undefined, so nothing rendered. These helpers accept
+// either shape so the tab degrades gracefully instead of blanking out
+// while that backend fix lands — see bug report.
+function auditUserName(log) {
+  return (
+    log.user?.name ??
+    log.userName ??
+    (log.user_id != null ? `User #${log.user_id}` : 'Unknown user')
+  );
+}
+
+function auditIp(log) {
+  return log.ipAddress ?? log.ip_address ?? '—';
+}
+
+function auditCreatedAt(log) {
+  return log.createdAt ?? log.created_at ?? null;
+}
+
 function AuditLogTab() {
   const [logs, status] = useTabData(getAuditLogs);
   const colSpan = 4;
@@ -365,7 +388,7 @@ function AuditLogTab() {
           <ErrorRow colSpan={colSpan} message="Couldn't load audit logs." />
         )}
         {status === 'ready' && logs.length === 0 && (
-          <EmptyRow colSpan={colSpan} message="No audit log entries." />
+          <EmptyRow colSpan={colSpan} message="No audit log entries yet." />
         )}
         {status === 'ready' &&
           logs.map((log) => {
@@ -373,7 +396,7 @@ function AuditLogTab() {
             return (
               <tr key={log.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium text-slate-800">
-                  {log.user.name}
+                  {auditUserName(log)}
                 </td>
                 <td className="px-4 py-3">
                   <StatusPill tone={isDenied ? 'red' : 'green'}>
@@ -382,10 +405,10 @@ function AuditLogTab() {
                 </td>
                 <td className="px-4 py-3 text-slate-500">{log.resource}</td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-500">
-                  {log.ipAddress}
+                  {auditIp(log)}
                 </td>
                 <td className="px-4 py-3 text-slate-500">
-                  {formatDate(log.createdAt)}
+                  {formatDate(auditCreatedAt(log))}
                 </td>
               </tr>
             );
