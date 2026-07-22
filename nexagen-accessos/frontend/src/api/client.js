@@ -76,6 +76,18 @@ export async function getRoles() {
 // ACCESS REQUESTS
 // =========================
 
+// Roles list for the Request Access dropdown — any logged-in user, not
+// admin-only. Separate from getRoles() below, which hits the admin-only
+// /admin/roles used by the Roles management tab.
+export async function getAvailableRoles() {
+  if (USE_MOCK) {
+    return mock.mockRoles;
+  }
+
+  const { data } = await api.get('/roles');
+  return data;
+}
+
 export async function getAccessRequests() {
   if (USE_MOCK) {
     return mock.mockAccessRequests;
