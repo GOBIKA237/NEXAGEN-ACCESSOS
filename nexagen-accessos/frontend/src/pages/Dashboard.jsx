@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { mockRoles } from '../api/mockData.js';
+import { requestAccess } from '../api/client.js';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -70,7 +71,67 @@ function FeatureCard({ title, description, accent, enabled }) {
   );
 }
 
-function RequestAccessModal({ roles, onClose, onSubmit }) {
+function Toast({ type, message, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  const isError = type === 'error';
+
+  return (
+    <div
+      role="status"
+      className={`fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium shadow-lg ${
+        isError
+          ? 'border-red-200 bg-red-50 text-red-700'
+          : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      }`}
+    >
+      <span>{isError ? '⚠️' : '✅'}</span>
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="ml-2 text-current opacity-60 hover:opacity-100"
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+      <div className="mx-auto max-w-5xl animate-pulse">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-full bg-slate-200" />
+            <div className="space-y-2">
+              <div className="h-4 w-40 rounded bg-slate-200" />
+              <div className="h-3 w-24 rounded bg-slate-200" />
+            </div>
+          </div>
+          <div className="h-9 w-36 rounded-lg bg-slate-200" />
+        </div>
+
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-32 rounded-xl border border-slate-100 bg-white p-5">
+              <div className="mb-4 h-1.5 w-10 rounded-full bg-slate-200" />
+              <div className="mb-2 h-4 w-2/3 rounded bg-slate-200" />
+              <div className="h-3 w-full rounded bg-slate-200" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequestAccessModal({ roles, onClose, onSubmit, submitting }) {
   const [selectedRoleId, setSelectedRoleId] = useState(roles[0]?.id ?? '');
 
   const handleSubmit = (e) => {
@@ -131,9 +192,10 @@ function RequestAccessModal({ roles, onClose, onSubmit }) {
             </button>
             <button
               type="submit"
-              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900"
+              disabled={submitting}
+              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Submit Request
+              {submitting ? 'Submitting…' : 'Submit Request'}
             </button>
           </div>
         </form>
@@ -146,6 +208,8 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
   const [checkedStorage, setCheckedStorage] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
 
   useEffect(() => {
     const raw = sessionStorage.getItem('user');
@@ -169,17 +233,33 @@ export default function Dashboard() {
     setCheckedStorage(true);
   }, []);
 
-  const handleRequestSubmit = (role) => {
-    // TODO: wire to POST /access-requests once the backend route is live
-    // (see docs/api-contract.md). For now, just log the selection.
-    console.log('Access requested:', role);
-    setModalOpen(false);
+  const handleRequestSubmit = async (role) => {
+    if (!role) return;
+
+    setSubmitting(true);
+
+    try {
+      await requestAccess(role.id);
+      setModalOpen(false);
+      setToast({
+        type: 'success',
+        message: `Access request for "${role.name}" submitted — an admin will review it.`,
+      });
+    } catch (err) {
+      console.error('Failed to submit access request:', err);
+      const message =
+        err.response?.data?.error ||
+        'Could not submit your request. Please try again.';
+      setToast({ type: 'error', message });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  // Avoid rendering (and avoid a flash of content) until we've checked
-  // sessionStorage and either have a user or have already redirected.
+  // Avoid a flash of empty content until we've checked sessionStorage —
+  // show a skeleton instead of nothing while that resolves.
   if (!checkedStorage || !user) {
-    return null;
+    return <DashboardSkeleton />;
   }
 
   return (
@@ -196,14 +276,20 @@ export default function Dashboard() {
                 Welcome, {user.name}
               </h1>
               <div className="mt-1 flex flex-wrap gap-1.5">
-                {user.roles.map((role) => (
-                  <span
-                    key={role}
-                    className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-700"
-                  >
-                    {role}
+                {user.roles.length > 0 ? (
+                  user.roles.map((role) => (
+                    <span
+                      key={role}
+                      className="rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-700"
+                    >
+                      {role}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs font-medium italic text-slate-400">
+                    No roles assigned yet
                   </span>
-                ))}
+                )}
               </div>
             </div>
           </div>
@@ -236,6 +322,15 @@ export default function Dashboard() {
           roles={mockRoles}
           onClose={() => setModalOpen(false)}
           onSubmit={handleRequestSubmit}
+          submitting={submitting}
+        />
+      )}
+
+      {toast && (
+        <Toast
+          type={toast.type}
+          message={toast.message}
+          onDismiss={() => setToast(null)}
         />
       )}
     </div>
