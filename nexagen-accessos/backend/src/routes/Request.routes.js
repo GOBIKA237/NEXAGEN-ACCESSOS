@@ -84,7 +84,31 @@ router.get(
         params
       );
 
-      return res.json(result.rows);
+      // Shape rows to match docs/api-contract.md:
+      // [{ id, user: {...}, requestedRole: {...}, requestedAt }]
+      // The frontend (AdminDashboard.jsx) reads req.user.name and
+      // req.requestedRole.name, so the flat/snake_case row shape from
+      // the query above must be nested here before sending it out.
+      const shaped = result.rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        requestedAt: row.requested_at,
+        reviewedAt: row.reviewed_at,
+        user: {
+          id: row.user_id,
+          email: row.user_email,
+          name: row.user_name,
+        },
+        requestedRole: {
+          id: row.requested_role_id,
+          name: row.requested_role_name,
+        },
+        reviewedBy: row.reviewed_by_id
+          ? { id: row.reviewed_by_id, email: row.reviewed_by_email }
+          : null,
+      }));
+
+      return res.json(shaped);
     } catch (err) {
       console.error('Error fetching access requests:', err);
       return res.status(500).json({ error: 'Failed to fetch access requests' });
