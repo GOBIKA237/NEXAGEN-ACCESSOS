@@ -76,3 +76,129 @@ INSERT INTO permissions (name, description) VALUES
     ('view_hr_dashboard', 'View HR records'),
     ('manage_users', 'Create/update/delete users and roles'),
     ('view_audit_log', 'View system audit log');
+
+-- ============================================================================
+-- DEMO SEED DATA — added by Member 6 (DB / Testing / DevOps)
+-- Run this on a fresh database, right after the statements above. Safe to
+-- re-run: it clears its own demo rows (matched by email) before re-inserting,
+-- so running this script twice in a row won't error or duplicate anything.
+-- ============================================================================
+
+-- --------------------------------------------------------------------------
+-- Grant permissions to the starter roles.
+--
+-- IMPORTANT: this block was MISSING before today. role_permissions had zero
+-- rows, which means checkPermission() rejected every single user, including
+-- accounts with the 'admin' role — there was nothing for it to match
+-- against. This was the #1 blocker found in smoke testing; without it,
+-- login "works" but every /admin/* route 403s no matter who you are.
+-- --------------------------------------------------------------------------
+
+-- admin gets every permission that currently exists
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'admin'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'finance' AND p.name = 'view_finance_dashboard'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r, permissions p
+WHERE r.name = 'hr' AND p.name = 'view_hr_dashboard'
+ON CONFLICT DO NOTHING;
+
+-- 'employee' intentionally gets nothing — this is what makes the locked
+-- "Restricted" feature cards on the user dashboard demo-able.
+
+-- --------------------------------------------------------------------------
+-- Demo users. All five share the password:  Demo@1234
+--
+-- Hashed here with pgcrypto's crypt()/gen_salt('bf') instead of a hardcoded
+-- string, because it needs to be a real bcrypt hash the backend's
+-- bcrypt.compare() can verify at login — Postgres' bcrypt variant ($2a$) and
+-- Node's `bcrypt` package ($2b$) are cross-compatible, this is a standard,
+-- safe pattern.
+-- --------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Clean up any previous run. Done as an explicit child-table-first teardown
+-- (rather than relying on ON DELETE CASCADE) because login_events and
+-- audit_logs reference users(id) WITHOUT a cascade rule in this schema —
+-- a plain "DELETE FROM users ..." would fail on the second run once those
+-- rows exist.
+DO $$
+DECLARE
+  demo_emails TEXT[] := ARRAY[
+    'admin@nexagen.com',
+    'priya.finance@nexagen.com',
+    'rahul.hr@nexagen.com',
+    'employee.demo@nexagen.com',
+    'ananya.pending@nexagen.com'
+  ];
+BEGIN
+  DELETE FROM login_events    WHERE user_id IN (SELECT id FROM users WHERE email = ANY(demo_emails));
+  DELETE FROM audit_logs      WHERE user_id IN (SELECT id FROM users WHERE email = ANY(demo_emails));
+  DELETE FROM access_requests WHERE user_id IN (SELECT id FROM users WHERE email = ANY(demo_emails));
+  DELETE FROM users WHERE email = ANY(demo_emails);
+END $$;
+
+INSERT INTO users (name, email, password_hash, created_at, last_login_at, last_login_ip) VALUES
+    ('Admin Demo',     'admin@nexagen.com',          crypt('Demo@1234', gen_salt('bf')), NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day',   '10.0.0.2'),
+    ('Priya Finance',  'priya.finance@nexagen.com',  crypt('Demo@1234', gen_salt('bf')), NOW() - INTERVAL '25 days', NOW() - INTERVAL '2 days',  '10.0.0.4'),
+    ('Rahul HR',       'rahul.hr@nexagen.com',       crypt('Demo@1234', gen_salt('bf')), NOW() - INTERVAL '20 days', NOW() - INTERVAL '3 days',  '10.0.0.5'),
+    ('Employee Demo',  'employee.demo@nexagen.com',  crypt('Demo@1234', gen_salt('bf')), NOW() - INTERVAL '15 days', NOW() - INTERVAL '5 hours', '203.0.113.42'),
+    ('Ananya Pending', 'ananya.pending@nexagen.com', crypt('Demo@1234', gen_salt('bf')), NOW() - INTERVAL '10 days', NOW() - INTERVAL '1 day',   '10.0.0.9');
+
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r
+WHERE (u.email, r.name) IN (
+    ('admin@nexagen.com', 'admin'),
+    ('priya.finance@nexagen.com', 'finance'),
+    ('rahul.hr@nexagen.com', 'hr'),
+    ('employee.demo@nexagen.com', 'employee'),
+    ('ananya.pending@nexagen.com', 'employee')
+)
+ON CONFLICT DO NOTHING;
+
+-- --------------------------------------------------------------------------
+-- Login history for "Employee Demo" — this is the anomaly-alert setup.
+--
+-- Row 1: a normal login two weeks ago, mid-morning, familiar device/IP,
+--        low risk score.
+-- Row 2: a login this week from an unrecognized device at 2am, high risk
+--        score — this is the row the alerts feature should surface once
+--        GET /admin/alerts + the rules engine exist (see bug report — not
+--        built yet as of today). Seeded directly so the demo doesn't
+--        depend on that landing in time; if it does land, this is exactly
+--        the data it needs to produce a real alert.
+-- --------------------------------------------------------------------------
+INSERT INTO login_events (user_id, success, ip_address, device_fingerprint, risk_score, created_at)
+SELECT id, true, '198.51.100.10', 'known-laptop-chrome-mac', 5, (NOW() - INTERVAL '15 days') + INTERVAL '10 hours'
+FROM users WHERE email = 'employee.demo@nexagen.com';
+
+INSERT INTO login_events (user_id, success, ip_address, device_fingerprint, risk_score, created_at)
+SELECT id, true, '203.0.113.42', 'unknown-device-android', 82, NOW() - INTERVAL '5 hours'
+FROM users WHERE email = 'employee.demo@nexagen.com';
+
+-- --------------------------------------------------------------------------
+-- One pending access request — for the approve/deny demo step.
+-- Ananya (employee) has requested the finance role.
+-- --------------------------------------------------------------------------
+INSERT INTO access_requests (user_id, requested_role_id, status, requested_at)
+SELECT u.id, r.id, 'pending', NOW() - INTERVAL '2 days'
+FROM users u, roles r
+WHERE u.email = 'ananya.pending@nexagen.com' AND r.name = 'finance';
+
+-- --------------------------------------------------------------------------
+-- A couple of audit log rows so the Audit Log tab isn't empty on first load.
+-- --------------------------------------------------------------------------
+INSERT INTO audit_logs (user_id, action, resource, ip_address, created_at)
+SELECT id, 'ACCESS_GRANTED', 'view_finance_dashboard', '10.0.0.4', NOW() - INTERVAL '2 days'
+FROM users WHERE email = 'priya.finance@nexagen.com';
+
+INSERT INTO audit_logs (user_id, action, resource, ip_address, created_at)
+SELECT id, 'ACCESS_DENIED', 'manage_users', '10.0.0.5', NOW() - INTERVAL '1 days'
+FROM users WHERE email = 'rahul.hr@nexagen.com';
