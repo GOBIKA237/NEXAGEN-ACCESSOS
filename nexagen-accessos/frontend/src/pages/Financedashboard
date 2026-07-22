@@ -1,0 +1,81 @@
+import { Link } from 'react-router-dom';
+
+const PERMISSION_KEY = 'view_finance_dashboard';
+
+// Placeholder body only — swap the cards below out once real finance
+// data/endpoints exist. Gated on the same permission key as the Dashboard
+// card so a user who loses the permission (or hits this URL directly)
+// can't see stale content just because they once had access.
+export default function FinanceDashboard() {
+  const raw = sessionStorage.getItem('user');
+  const user = raw ? JSON.parse(raw) : null;
+
+  if (!user) {
+    window.location.href = '/';
+    return null;
+  }
+
+  const allowed = !!user.permissions?.includes(PERMISSION_KEY);
+
+  if (!allowed) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+        <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <p className="text-sm font-medium text-slate-400">🔒 Restricted</p>
+          <h1 className="mt-2 text-xl font-semibold text-slate-800">
+            You don't have access to the Finance Dashboard
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Ask an admin to grant "{PERMISSION_KEY}", or use Request Access from the dashboard.
+          </p>
+          <Link
+            to="/dashboard"
+            className="mt-4 inline-block text-sm font-medium text-slate-700 hover:text-slate-900"
+          >
+            ← Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+      <div className="mx-auto max-w-5xl">
+        <Link
+          to="/dashboard"
+          className="text-sm font-medium text-slate-500 hover:text-slate-700"
+        >
+          ← Back to Dashboard
+        </Link>
+
+        <div className="mt-4 flex items-center gap-3">
+          <div className="h-8 w-1.5 rounded-full bg-emerald-500" />
+          <h1 className="text-2xl font-semibold text-slate-800">Finance Dashboard</h1>
+        </div>
+        <p className="mt-1 text-sm text-slate-500">
+          Budgets, expenses, and financial reports.
+        </p>
+
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {[
+            { title: 'Budget overview', desc: 'Department budgets vs. actuals.' },
+            { title: 'Expense reports', desc: 'Recent submitted expenses.' },
+            { title: 'Financial statements', desc: 'P&L, balance sheet, cash flow.' },
+          ].map(({ title, desc }) => (
+            <div
+              key={title}
+              className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <h3 className="font-semibold text-slate-800">{title}</h3>
+              <p className="mt-2 text-sm text-slate-400">{desc}</p>
+              <p className="mt-4 text-xs font-medium uppercase tracking-wide text-slate-300">
+                Placeholder — no live data yet
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
