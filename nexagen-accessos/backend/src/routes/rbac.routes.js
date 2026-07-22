@@ -13,7 +13,22 @@ const router = Router();
 const CONFLICT_WATCHLIST_PERMISSIONS = ['manage_users'];
 
 router.get('/users', requireAuth, checkPermission('manage_users'), async (req, res) => {
-  const { rows } = await pool.query('SELECT id, name, email FROM users');
+  // docs/api-contract.md and the frontend (AdminDashboard.jsx's
+  // userRoleNames()) both expect `roles` as an array of role name strings,
+  // e.g. ["admin", "finance"] — not role objects, and not omitted for
+  // users with zero roles (COALESCE gives them `[]` instead of NULL).
+  const { rows } = await pool.query(
+    `SELECT u.id, u.name, u.email,
+            COALESCE(
+              array_agg(r.name) FILTER (WHERE r.name IS NOT NULL),
+              '{}'
+            ) AS roles
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.id
+     LEFT JOIN roles r ON r.id = ur.role_id
+     GROUP BY u.id
+     ORDER BY u.id`
+  );
   res.json(rows);
 });
 
