@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { mockRoles } from '../api/mockData.js';
-import { requestAccess } from '../api/client.js';
+import { requestAccess, getRoles } from '../api/client.js';
 
 // Static registry of dashboard features. Add new cards here as the product
 // grows — each just needs the permission string that unlocks it.
@@ -131,14 +130,24 @@ function DashboardSkeleton() {
   );
 }
 
-function RequestAccessModal({ roles, onClose, onSubmit, submitting }) {
-  const [selectedRoleId, setSelectedRoleId] = useState(roles[0]?.id ?? '');
+function RequestAccessModal({ roles, rolesError, onClose, onSubmit, submitting }) {
+  const [selectedRoleId, setSelectedRoleId] = useState('');
+
+  // roles load asynchronously after the modal opens, so default the
+  // selection once they arrive instead of only on mount.
+  useEffect(() => {
+    if (roles.length > 0 && !selectedRoleId) {
+      setSelectedRoleId(roles[0].id);
+    }
+  }, [roles, selectedRoleId]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const role = roles.find((r) => String(r.id) === String(selectedRoleId));
     onSubmit(role);
   };
+
+  const canSubmit = !rolesError && roles.length > 0;
 
   return (
     <div
@@ -164,23 +173,31 @@ function RequestAccessModal({ roles, onClose, onSubmit, submitting }) {
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          <div>
-            <label htmlFor="role" className="block text-sm font-medium text-slate-700">
-              Role
-            </label>
-            <select
-              id="role"
-              value={selectedRoleId}
-              onChange={(e) => setSelectedRoleId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            >
-              {roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name} — {role.description}
-                </option>
-              ))}
-            </select>
-          </div>
+          {rolesError ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              {rolesError}
+            </p>
+          ) : roles.length === 0 ? (
+            <p className="text-sm text-slate-500">Loading roles…</p>
+          ) : (
+            <div>
+              <label htmlFor="role" className="block text-sm font-medium text-slate-700">
+                Role
+              </label>
+              <select
+                id="role"
+                value={selectedRoleId}
+                onChange={(e) => setSelectedRoleId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              >
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name} — {role.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -192,7 +209,7 @@ function RequestAccessModal({ roles, onClose, onSubmit, submitting }) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !canSubmit}
               className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? 'Submitting…' : 'Submit Request'}
@@ -210,6 +227,8 @@ export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null); // { type: 'success' | 'error', message }
+  const [roles, setRoles] = useState([]);
+  const [rolesError, setRolesError] = useState(null);
 
   useEffect(() => {
     const raw = sessionStorage.getItem('user');
@@ -232,6 +251,18 @@ export default function Dashboard() {
 
     setCheckedStorage(true);
   }, []);
+
+  const openRequestModal = async () => {
+    setModalOpen(true);
+    setRolesError(null);
+    try {
+      const data = await getRoles();
+      setRoles(data);
+    } catch (err) {
+      console.error('Failed to load roles:', err);
+      setRolesError('Could not load the list of roles. Please try again.');
+    }
+  };
 
   const handleRequestSubmit = async (role) => {
     if (!role) return;
@@ -296,7 +327,7 @@ export default function Dashboard() {
 
           <button
             type="button"
-            onClick={() => setModalOpen(true)}
+            onClick={openRequestModal}
             className="self-start rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-900 sm:self-auto"
           >
             Request Access
@@ -319,7 +350,8 @@ export default function Dashboard() {
 
       {modalOpen && (
         <RequestAccessModal
-          roles={mockRoles}
+          roles={roles}
+          rolesError={rolesError}
           onClose={() => setModalOpen(false)}
           onSubmit={handleRequestSubmit}
           submitting={submitting}
