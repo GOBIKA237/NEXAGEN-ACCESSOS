@@ -83,6 +83,14 @@ router.get(
 // POST /admin/alerts/:id/invalidate-session
 // requireAuth + checkPermission('manage_users'), same as GET /admin/alerts.
 //
+// FIX: this route used to be defined as '/admin/alerts/:id/invalidate-session',
+// which under the '/api/admin' mount in index.js resolved to
+// '/api/admin/admin/alerts/:id/invalidate-session' — the exact double-mount
+// bug the GET route above already worked around, just not applied here.
+// docs/api-contract.md documents this as '/api/admin/alerts/:id/invalidate-session',
+// so the path below now matches the GET route's pattern ('/alerts/...', no
+// leading '/admin').
+//
 // :id is the login_events row (the alert), not a user id — keeps the admin
 // UI able to act directly from a row in the alerts table without a second
 // lookup. Forces every token that user currently holds to stop working by
@@ -90,8 +98,13 @@ router.get(
 // request going forward. There's no server-side session/token store to
 // delete from since auth is stateless JWTs, so "invalidate" here means
 // "reject going forward," not "delete a stored token."
+//
+// NOTE: requireAuth doesn't actually check tokens_invalid_before yet (see
+// team note / proposed patch to middleware/auth.js) — until that lands,
+// this route updates the column correctly but a still-valid JWT keeps
+// working until it naturally expires.
 router.post(
-  '/admin/alerts/:id/invalidate-session',
+  '/alerts/:id/invalidate-session',
   requireAuth,
   checkPermission('manage_users'),
   async (req, res) => {
@@ -124,9 +137,16 @@ router.post(
         [req.user.id, 'SESSION_INVALIDATED', `user:${targetUserId}`, req.ip]
       );
 
+      // camelCase to match docs/api-contract.md's documented response shape.
+      const user = updatedUser[0];
       return res.json({
         message: 'Session invalidated. The user will need to log in again.',
-        user: updatedUser[0],
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          tokensInvalidBefore: user.tokens_invalid_before,
+        },
       });
     } catch (err) {
       console.error('Error invalidating session:', err);
