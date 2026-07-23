@@ -7,6 +7,8 @@ import authRoutes from './routes/auth.routes.js';
 import rbacRoutes from './routes/rbac.routes.js';
 import requestRoutes from './routes/Request.routes.js';
 import alertsRoutes from './routes/alerts.routes.js';
+import hrRoutes from './routes/hr.routes.js';
+import financeRoutes from './routes/finance.routes.js';
 
 dotenv.config();
 
@@ -39,6 +41,8 @@ app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', rbacRoutes);
 app.use('/api/admin', alertsRoutes);
+app.use('/api/hr', hrRoutes);
+app.use('/api/finance', financeRoutes);
 
 // Access requests and audit log routes
 app.use('/api', requestRoutes);
