@@ -43,85 +43,35 @@ export const mockAlerts = [
   { id: 1, userId: 1, riskScore: 72, reason: 'Login from new device at unusual hour', createdAt: '2026-07-17T02:14:00Z' },
 ];
 
-// --- GET /access-requests/me --------------------------------------------
-// Backend Dev 1 is still building this endpoint — it's not in
-// docs/api-contract.md or Request.routes.js yet, so the exact field names
-// below are this frontend's best guess at the documented shape (resource,
-// requested access, dates, status, manager decision, admin decision,
-// comments) rather than a confirmed contract. Covers all five statuses
-// (PENDING_MANAGER | PENDING_ADMIN | APPROVED | REJECTED | REVOKED) so the
-// "My requests" UI in Dashboard.jsx can be exercised against every state.
-// Adjust field names here (and in client.js's getMyAccessRequests) once
-// the real response shape is confirmed — Dashboard.jsx itself shouldn't
-// need to change.
-export const mockMyAccessRequests = [
-  {
-    id: 1,
-    resource: 'Finance Dashboard',
-    requestedAccess: 'finance',
-    requestedAt: '2026-07-15T09:00:00Z',
-    status: 'PENDING_MANAGER',
-    managerDecision: null,
-    adminDecision: null,
-  },
-  {
-    id: 2,
-    resource: 'HR Dashboard',
-    requestedAccess: 'hr',
-    requestedAt: '2026-07-10T09:00:00Z',
-    status: 'PENDING_ADMIN',
-    managerDecision: {
-      decision: 'APPROVED',
-      comment: 'Needed for Q3 headcount planning.',
-      decidedAt: '2026-07-11T14:30:00Z',
-    },
-    adminDecision: null,
-  },
-  {
-    id: 3,
-    resource: 'User Management',
-    requestedAccess: 'admin',
-    requestedAt: '2026-06-28T09:00:00Z',
-    status: 'APPROVED',
-    managerDecision: {
-      decision: 'APPROVED',
-      comment: null,
-      decidedAt: '2026-06-29T10:00:00Z',
-    },
-    adminDecision: {
-      decision: 'APPROVED',
-      comment: 'Approved for the migration project.',
-      decidedAt: '2026-06-30T16:45:00Z',
-    },
-  },
-  {
-    id: 4,
-    resource: 'Audit Log',
-    requestedAccess: 'employee',
-    requestedAt: '2026-06-20T09:00:00Z',
-    status: 'REJECTED',
-    managerDecision: {
-      decision: 'REJECTED',
-      comment: 'Not required for current role.',
-      decidedAt: '2026-06-21T11:15:00Z',
-    },
-    adminDecision: null,
-  },
-  {
-    id: 5,
-    resource: 'Finance Dashboard',
-    requestedAccess: 'finance',
-    requestedAt: '2026-05-02T09:00:00Z',
-    status: 'REVOKED',
-    managerDecision: {
-      decision: 'APPROVED',
-      comment: null,
-      decidedAt: '2026-05-03T09:00:00Z',
-    },
-    adminDecision: {
-      decision: 'APPROVED',
-      comment: 'Access revoked after role change.',
-      decidedAt: '2026-06-01T08:00:00Z',
-    },
-  },
+// =========================
+// HR / FINANCE DASHBOARDS (Frontend Dev 3)
+// =========================
+// Shapes match the assumptions documented in api/client.js for
+// hr.routes.js / finance.routes.js, which aren't built yet.
+
+export const mockEmployees = [
+  { id: 1, name: 'Priya Sharma', email: 'priya@nexagen.com', department: 'Finance', roles: ['finance'], status: 'active', joinedAt: '2025-03-10T00:00:00Z' },
+  { id: 2, name: 'Arjun Mehta', email: 'arjun@nexagen.com', department: 'HR', roles: ['hr'], status: 'active', joinedAt: '2025-06-01T00:00:00Z' },
+  { id: 3, name: 'Kavya Rao', email: 'kavya@nexagen.com', department: 'Engineering', roles: ['employee'], status: 'inactive', joinedAt: '2024-11-20T00:00:00Z' },
 ];
+
+export const mockBudgets = [
+  { id: 1, category: 'Engineering', allocated: 200000, spent: 142500 },
+  { id: 2, category: 'Marketing', allocated: 80000, spent: 91000 },
+  { id: 3, category: 'Operations', allocated: 50000, spent: 12000 },
+];
+
+export const mockExpenses = [
+  { id: 1, category: 'Engineering', description: 'AWS invoice — June', amount: 4200, status: 'approved', submittedBy: { name: 'Priya Sharma' }, submittedAt: '2026-07-01T09:00:00Z', reviewedAt: '2026-07-02T10:00:00Z' },
+  { id: 2, category: 'Marketing', description: 'Conference sponsorship', amount: 15000, status: 'pending', submittedBy: { name: 'Arjun Mehta' }, submittedAt: '2026-07-18T09:00:00Z' },
+];
+
+export const mockFinanceReports = {
+  budgetSummary: { totalAllocated: 330000, totalSpent: 245500, totalRemaining: 84500, utilizationPercent: 74 },
+  expenseSummary: { totalPending: 1, totalApproved: 1, totalRejected: 0, totalAmountApproved: 4200 },
+  monthlySummary: [
+    { month: 'May 2026', totalSpent: 68000 },
+    { month: 'Jun 2026', totalSpent: 91500 },
+    { month: 'Jul 2026', totalSpent: 86000 },
+  ],
+};
