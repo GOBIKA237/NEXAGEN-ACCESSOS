@@ -126,18 +126,13 @@ export async function getAvailableRoles() {
 // ACCESS REQUESTS
 // =========================
 
-// Only PENDING_ADMIN requests belong on the admin's queue now that requests
-// flow PENDING_MANAGER -> PENDING_ADMIN -> APPROVED/REJECTED (managers
-// handle PENDING_MANAGER via getManagerAccessRequests below). The
-// ?status= query param already exists on GET /admin/access-requests
-// (Request.routes.js), so this is just a value change, not a new param.
 export async function getAccessRequests() {
   if (USE_MOCK) {
     return mock.mockAccessRequests;
   }
 
   const { data } = await api.get(
-    '/admin/access-requests?status=PENDING_ADMIN'
+    '/admin/access-requests?status=pending'
   );
 
   return data;
@@ -189,28 +184,21 @@ export async function getAlerts() {
 }
 
 // =========================
-// APPROVE ACCESS REQUEST (admin, final decision)
+// APPROVE ACCESS REQUEST
 // =========================
-// Body shape follows mockData.js's mockMyAccessRequests, which already
-// documents the manager/admin decision shape as { decision, comment,
-// decidedAt } — this is the clearest signal we have for what Backend Dev 2
-// will land on for the PENDING_ADMIN step, ahead of manager.routes.js
-// actually landing. `comment` is optional (admin can approve/reject with
-// no note). Swap the body shape here only if the real contract differs —
-// AdminDashboard.jsx shouldn't need to change.
-export async function approveRequest(id, comment) {
+
+export async function approveRequest(id) {
   if (USE_MOCK) {
     return {
       id,
-      status: 'APPROVED',
+      status: 'approved',
     };
   }
 
   const { data } = await api.put(
     `/admin/access-requests/${id}`,
     {
-      decision: 'APPROVED',
-      comment: comment || undefined,
+      status: 'approved',
     }
   );
 
@@ -218,22 +206,21 @@ export async function approveRequest(id, comment) {
 }
 
 // =========================
-// REJECT ACCESS REQUEST (admin, final decision)
+// DENY ACCESS REQUEST
 // =========================
 
-export async function denyRequest(id, comment) {
+export async function denyRequest(id) {
   if (USE_MOCK) {
     return {
       id,
-      status: 'REJECTED',
+      status: 'denied',
     };
   }
 
   const { data } = await api.put(
     `/admin/access-requests/${id}`,
     {
-      decision: 'REJECTED',
-      comment: comment || undefined,
+      status: 'denied',
     }
   );
 
@@ -241,149 +228,126 @@ export async function denyRequest(id, comment) {
 }
 
 // =========================
-// MY ACCESS REQUESTS (mine) — Frontend Dev 1
+// HR DASHBOARD (Frontend Dev 3)
 // =========================
-// Backs the "My requests" section in Dashboard.jsx. Backend Dev 1 is
-// still building GET /access-requests/me — it isn't in
-// docs/api-contract.md or Request.routes.js yet — so this is gated on
-// its own flag rather than the shared USE_MOCK above (USE_MOCK is for
-// switching the *whole app* to mock data; this endpoint specifically
-// doesn't exist on the real backend yet regardless of that flag).
+// Backend: hr.routes.js — GET/POST /api/hr/employees, PUT
+// /api/hr/employees/:id, PUT /api/hr/employees/:id/status. Not built yet
+// as of this writing; these follow the same USE_MOCK pattern as the rest
+// of the file so they work against mock data now and the real routes the
+// moment they exist, with no call-site changes.
 //
-// Flip MY_ACCESS_REQUESTS_LIVE to true once the endpoint ships. The mock
-// data in mockData.js mirrors the shape Backend Dev 1 documented
-// (resource, requested access, dates, status, manager decision, admin
-// decision, comments) so this swap shouldn't require any changes in
-// Dashboard.jsx — only here, if the real field names end up differing.
-const MY_ACCESS_REQUESTS_LIVE = false;
+// Assumed shapes (swap to match hr.routes.js exactly once it lands):
+//   Employee: { id, name, email, department, roles: [string], status:
+//     'active'|'inactive', joinedAt: ISO string }
+//   POST body: { name, email, department }
+//   PUT .../status body: { status: 'active'|'inactive' }
 
-export async function getMyAccessRequests() {
-  if (!MY_ACCESS_REQUESTS_LIVE) {
-    return mock.mockMyAccessRequests;
+export async function getEmployees() {
+  if (USE_MOCK) {
+    return mock.mockEmployees;
   }
 
-  const { data } = await api.get('/access-requests/me');
+  const { data } = await api.get('/hr/employees');
+  return data;
+}
+
+export async function createEmployee({ name, email, department }) {
+  if (USE_MOCK) {
+    return {
+      id: Date.now(),
+      name,
+      email,
+      department,
+      roles: [],
+      status: 'active',
+      joinedAt: new Date().toISOString(),
+    };
+  }
+
+  const { data } = await api.post('/hr/employees', { name, email, department });
+  return data;
+}
+
+export async function setEmployeeStatus(id, status) {
+  if (USE_MOCK) {
+    return { id, status };
+  }
+
+  const { data } = await api.put(`/hr/employees/${id}/status`, { status });
   return data;
 }
 
 // =========================
-// MANAGER DASHBOARD — Frontend Dev 2
+// FINANCE DASHBOARD (Frontend Dev 3)
 // =========================
-// Backs ManagerDashboard.jsx. Backend Dev 2 is building manager.routes.js
-// (GET /manager/team, GET /manager/access-requests, PUT
-// /manager/access-requests/:id) — not confirmed live yet, so everything
-// below is gated on its own MANAGER_ROUTES_LIVE flag rather than the
-// shared USE_MOCK (that flag is for switching the whole app to mock; this
-// is specifically about these three routes not existing on the real
-// backend yet). Flip it once manager.routes.js ships.
+// Backend: finance.routes.js — GET /api/finance/budgets, GET/POST
+// /api/finance/expenses, PUT /api/finance/expenses/:id, GET
+// /api/finance/reports. Not built yet as of this writing; same USE_MOCK
+// pattern as above.
 //
-// Field names below (status: PENDING_MANAGER/PENDING_ADMIN/APPROVED/
-// REJECTED, decision comment as `comment`, decision blocks shaped
-// { decision, comment, decidedAt }) follow mockData.js's
-// mockMyAccessRequests, which is the clearest existing signal for what
-// Backend Dev 2 will land on — swap only the bodies below if the real
-// contract ends up differing; ManagerDashboard.jsx itself shouldn't need
-// to change.
-const MANAGER_ROUTES_LIVE = false;
+// Assumed shapes (swap to match finance.routes.js exactly once it lands):
+//   Budget: { id, category, allocated, spent, remaining?, utilizationPercent? }
+//     (remaining/utilizationPercent are computed client-side if the
+//     backend doesn't send them — see FinanceDashboard.jsx)
+//   Expense: { id, category, description, amount, status:
+//     'pending'|'approved'|'rejected', submittedBy: { name }, submittedAt,
+//     reviewedAt? }
+//   POST body: { category, description, amount }
+//   PUT .../:id body: { status: 'approved'|'rejected' }
+//   Reports: { budgetSummary: { totalAllocated, totalSpent,
+//     totalRemaining, utilizationPercent }, expenseSummary: { totalPending,
+//     totalApproved, totalRejected, totalAmountApproved }, monthlySummary:
+//     [{ month, totalSpent }] }
 
-const mockManagerTeam = [
-  { id: 4, name: 'Ravi Kumar', email: 'ravi@nexagen.com', roles: ['employee'], title: 'Support Engineer' },
-  { id: 5, name: 'Sneha Iyer', email: 'sneha@nexagen.com', roles: ['employee'], title: 'Support Engineer' },
-  { id: 6, name: 'Vikram Nair', email: 'vikram@nexagen.com', roles: ['employee', 'finance'], title: 'Analyst' },
-];
-
-const mockManagerAccessRequests = [
-  {
-    id: 101,
-    user: { id: 4, name: 'Ravi Kumar' },
-    requestedRole: { id: 3, name: 'hr' },
-    requestedAt: '2026-07-20T10:15:00Z',
-    status: 'PENDING_MANAGER',
-  },
-];
-
-const mockApprovalHistory = [
-  {
-    id: 88,
-    user: { id: 5, name: 'Sneha Iyer' },
-    requestedRole: { id: 2, name: 'finance' },
-    requestedAt: '2026-07-10T09:00:00Z',
-    status: 'PENDING_ADMIN',
-    managerDecision: {
-      decision: 'APPROVED',
-      comment: 'Needed for expense reporting.',
-      decidedAt: '2026-07-11T13:00:00Z',
-    },
-  },
-  {
-    id: 77,
-    user: { id: 6, name: 'Vikram Nair' },
-    requestedRole: { id: 3, name: 'hr' },
-    requestedAt: '2026-06-18T09:00:00Z',
-    status: 'REJECTED',
-    managerDecision: {
-      decision: 'REJECTED',
-      comment: 'Out of scope for this role.',
-      decidedAt: '2026-06-19T10:00:00Z',
-    },
-  },
-];
-
-// GET /manager/team — the manager's direct reports.
-export async function getManagerTeam() {
-  if (!MANAGER_ROUTES_LIVE) {
-    return mockManagerTeam;
+export async function getBudgets() {
+  if (USE_MOCK) {
+    return mock.mockBudgets;
   }
 
-  const { data } = await api.get('/manager/team');
+  const { data } = await api.get('/finance/budgets');
   return data;
 }
 
-// GET /manager/access-requests — defaults to the manager's actionable
-// queue (PENDING_MANAGER). `status` lets ApprovalHistoryTab reuse this
-// same call for everything that's moved past that stage; pass 'ALL' for
-// the full history regardless of current status.
-export async function getManagerAccessRequests(status = 'PENDING_MANAGER') {
-  if (!MANAGER_ROUTES_LIVE) {
-    if (status === 'PENDING_MANAGER') return mockManagerAccessRequests;
-    return mockApprovalHistory.filter((r) =>
-      status === 'ALL' ? true : r.status === status
-    );
+export async function getExpenses() {
+  if (USE_MOCK) {
+    return mock.mockExpenses;
   }
 
-  const { data } = await api.get(
-    `/manager/access-requests?status=${encodeURIComponent(status)}`
-  );
+  const { data } = await api.get('/finance/expenses');
   return data;
 }
 
-// Full history for this manager's team: everything they've already
-// decided on, regardless of where it ended up (PENDING_ADMIN, APPROVED,
-// or REJECTED).
-export async function getManagerApprovalHistory() {
-  return getManagerAccessRequests('ALL');
-}
-
-// PUT /manager/access-requests/:id
-// Approve moves the request to PENDING_ADMIN; reject moves it to
-// REJECTED. Body shape matches admin's approveRequest/denyRequest above
-// ({ decision, comment }) for consistency.
-export async function reviewManagerAccessRequest(id, decision, comment) {
-  if (!MANAGER_ROUTES_LIVE) {
-    return { id, status: decision === 'APPROVED' ? 'PENDING_ADMIN' : 'REJECTED' };
+export async function createExpense({ category, description, amount }) {
+  if (USE_MOCK) {
+    return {
+      id: Date.now(),
+      category,
+      description,
+      amount,
+      status: 'pending',
+      submittedBy: { name: 'You' },
+      submittedAt: new Date().toISOString(),
+    };
   }
 
-  const { data } = await api.put(`/manager/access-requests/${id}`, {
-    decision,
-    comment: comment || undefined,
-  });
+  const { data } = await api.post('/finance/expenses', { category, description, amount });
   return data;
 }
 
-export async function approveManagerAccessRequest(id, comment) {
-  return reviewManagerAccessRequest(id, 'APPROVED', comment);
+export async function setExpenseStatus(id, status) {
+  if (USE_MOCK) {
+    return { id, status };
+  }
+
+  const { data } = await api.put(`/finance/expenses/${id}`, { status });
+  return data;
 }
 
-export async function rejectManagerAccessRequest(id, comment) {
-  return reviewManagerAccessRequest(id, 'REJECTED', comment);
+export async function getFinanceReports() {
+  if (USE_MOCK) {
+    return mock.mockFinanceReports;
+  }
+
+  const { data } = await api.get('/finance/reports');
+  return data;
 }
